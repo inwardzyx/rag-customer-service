@@ -1,0 +1,26 @@
+# 客服知识库问答（RAG）依赖清单
+# 版本为本机实测可跑的组合（Python 3.14 + Windows 11）
+
+langgraph==1.2.11
+langchain==1.4.0
+langchain-core==1.6.3
+langchain-deepseek==1.1.0
+langchain-text-splitters==1.1.2
+
+# 中文分词（BM25 字面检索要用）
+jieba==0.42.1
+rank-bm25==0.2.2
+
+# embedding 模型加载（bge-small-zh-v1.5）
+fastembed==0.8.0
+onnxruntime==1.30.0
+numpy==2.5.3
+
+# HTTP 服务
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5
+
+# 可选：向量检索加速。注意 DLL 可能被应用控制策略拦截，
+# 代码里已做自动降级，装不上也能跑（用 numpy 暴力算）。
+# faiss-cpu==1.13.0
