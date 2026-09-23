@@ -272,3 +272,13 @@ def test_vec_threshold_separates_hit_and_miss(rag):
         top = rag.search(q, k=5)[0][1]
         assert top < svc.VEC_REJECT_THRESHOLD, (
             f"「{q}」库里没有，却因向量分 {top:.4f} 高于阈值 {svc.VEC_REJECT_THRESHOLD} 被放行")
+
+
+def test_guard_report_masks_pii(rag):
+    """★ 补 PII 盲区：/guard-report 返回的 rejected 不得明文含手机号/身份证。
+    之前 `_mask_pii` 定义了却从未调用，rejected 只做了 `[:40]` 截断，
+    而那条隐私数据仅 30 字，截断无效 → 手机号/身份证原样泄露。这条守住它。"""
+    rep = svc.guard_report()
+    for item in rep["rejected"]:
+        assert "13812345678" not in item["text"], f"手机号明文泄露：{item['text']}"
+        assert "440301199001011234" not in item["text"], f"身份证明文泄露：{item['text']}"

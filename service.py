@@ -350,7 +350,7 @@ def guard_report():
     return {"kept": [{"doc": c["doc"], "clause": c["clause"], "text": c["text"]}
                      for c in rag.chunks],
             "rejected": [{"doc": c["doc"], "clause": c.get("clause", ""),
-                          "text": c["text"][:40], "reason": r}
+                          "text": _mask_pii(c["text"]), "reason": r}
                          for c, r in rag.rejected]}
 
 
