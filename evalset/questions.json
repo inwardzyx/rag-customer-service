@@ -1,0 +1,22 @@
+[
+  {"id": "q1", "type": "answer", "question": "已发货的订单退款要扣多少钱？", "gold": ["退款政策.md", "退款-已发货"]},
+  {"id": "q2", "type": "answer", "question": "我东西已经发了，想退款的话要被扣多少手续费啊？", "gold": ["退款政策.md", "退款-已发货"]},
+  {"id": "q3", "type": "answer", "question": "未发货订单怎么退款？", "gold": ["退款政策.md", "退款-未发货"]},
+  {"id": "q4", "type": "answer", "question": "我还没收到货，能全款退吗，要多少天到？", "gold": ["退款政策.md", "退款-未发货"]},
+  {"id": "q5", "type": "answer", "question": "现货商品多久发货？", "gold": ["发货时效.md", "现货发货"]},
+  {"id": "q6", "type": "answer", "question": "我现在下单，什么时候能发出去？", "gold": ["发货时效.md", "现货发货"]},
+  {"id": "q7", "type": "answer", "question": "商品保修多久？", "gold": ["发票与保修.md", "保修范围"]},
+  {"id": "q8", "type": "answer", "question": "这东西坏了能修吗，保修管不管人为弄坏的？", "gold": ["发票与保修.md", "保修范围"]},
+  {"id": "q9", "type": "answer", "question": "怎么升级成 VIP 会员？", "gold": ["会员等级与权益.md", "升级规则"]},
+  {"id": "q10", "type": "answer", "question": "我买满多少能变成 VIP，什么时候生效？", "gold": ["会员等级与权益.md", "升级规则"]},
+  {"id": "q11", "type": "answer", "question": "跨境订单要交税吗？", "gold": ["跨境订单税费.md", "税费缴纳"]},
+  {"id": "q12", "type": "answer", "question": "从国外买东西要不要交进口税，钱给谁？", "gold": ["跨境订单税费.md", "税费缴纳"]},
+  {"id": "q13", "type": "answer", "question": "物流单号多久能查到？", "gold": ["物流查询与异常.md", "单号查询"]},
+  {"id": "q14", "type": "answer", "question": "我刚发货，单号怎么还查不到，多久能看？", "gold": ["物流查询与异常.md", "单号查询"]},
+  {"id": "q15", "type": "refuse", "question": "支持分期付款吗？", "gold": null},
+  {"id": "q16", "type": "refuse", "question": "你们公司 CEO 是谁？", "gold": null},
+  {"id": "q17", "type": "refuse", "question": "今天天气怎么样？", "gold": null},
+  {"id": "q18", "type": "refuse", "question": "可以用花呗吗？", "gold": null},
+  {"id": "q19", "type": "refuse", "question": "国际运费怎么算？", "gold": null, "boundary": true},
+  {"id": "q20", "type": "refuse", "question": "退货运费谁承担？", "gold": null, "boundary": true}
+]
