@@ -6,7 +6,7 @@ Step 3：把"假工具"换成【真干活】的工具，并加上真实项目必
 
 跑法：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step3_real_tools.py
+    python step3_real_tools.py
 """
 from pathlib import Path
 

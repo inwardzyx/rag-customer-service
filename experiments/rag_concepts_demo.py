@@ -10,7 +10,7 @@ RAG 概念拆解（从零讲，不需要先学任何东西）
 
 跑法：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe rag_concepts_demo.py
+    python rag_concepts_demo.py
 """
 
 import os

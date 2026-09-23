@@ -13,7 +13,7 @@ Step 4：RAG 完整链路（真家伙版）
 
 跑法（务必先关 trace）：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step4_rag_demo.py
+    python step4_rag_demo.py
 
 首次运行会加载本地模型（约 1 秒，之后缓存在用户主目录下的 ~/.cache/fastembed）。
 """

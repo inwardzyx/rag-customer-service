@@ -14,7 +14,7 @@ Step 6：把 RAG 整条链包成 HTTP 服务（FastAPI）
     pydantic  = 校验请求体的工具（规定"你 POST 过来的 JSON 必须长这样"）
 
 跑法（务必先关 trace，在仓库根目录跑）：
-    D:/Python-project/.venv/Scripts/python.exe service.py
+    python service.py
 
 跑起来后：
     打开浏览器访问 http://127.0.0.1:8000    ← 一个能聊天的网页

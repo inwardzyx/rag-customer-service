@@ -8,7 +8,7 @@ Step 1：把 fake_llm 换成【真模型】，其他部分和 101-103 集的 dem
 
 跑法（trace 先关掉，原因见文件底部"两个坑"）：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step1_real_llm_graph.py
+    python step1_real_llm_graph.py
 """
 from typing import Annotated, TypedDict
 

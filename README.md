@@ -115,7 +115,7 @@ VEC_REJECT_THRESHOLD = 0.55
 | `experiments/rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
 | `experiments/step5_ingest_guard_demo.py` | **入库前把关** | 垃圾进 = 幻觉出，必须在入口拦 |
 | `service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
-| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 12 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
+| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 13 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
 | `env_compat.py` | 绕开本机 DLL 被策略拦截的坑 | 见下方"踩过的坑" |
 
 ---
@@ -150,13 +150,13 @@ VEC_REJECT_THRESHOLD = 0.55
 # ① 把 DUP_THRESHOLD 从 0.90 改成 0.99（近似重复关形同虚设）
 python -m pytest tests/ -q
 # → FAILED tests/test_guard.py::test_rejected_duplicate - assert False
-# → 1 failed, 11 passed
+# → 1 failed, 12 passed
 
 # ② 把 VEC_REJECT_THRESHOLD 从 0.55 改成 0.95（该答的也被拒）
 python -m pytest tests/ -q
 # → AssertionError: 「已发货的订单退款要扣多少钱？」库里有，
 #                   却因向量分 0.8033 低于阈值 0.95 被误拒
-# → 2 failed, 10 passed
+# → 2 failed, 11 passed
 ```
 
 改坏了立刻变红，而且报错自带**具体数字**——这才是"回归断言"四个字的含义。
@@ -248,7 +248,7 @@ rag-customer-service/
 │   ├── step5_ingest_guard_demo.py
 │   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
 └── tests/
-    └── test_guard.py            # 入库把关 + 拒答短路的回归测试（12 条 pytest 断言）
+    └── test_guard.py            # 入库把关 + 拒答短路的回归测试（13 条 pytest 断言）
 ```
 
 ---
@@ -262,7 +262,7 @@ rag-customer-service/
 | **服务不从文件读** | 知识库是 `RAW_DOCS` 常量列表 | 改成读 `docs/*.md` + 切块要 1 天，优先级在修完假话之后 |
 | **没部署** | 只能本地跑 | 免费平台要塞 `DEEPSEEK_API_KEY`，**别人点开就能刷你的 key**；平台一 sleep 就 502，比没链接更糟。替代方案：录 60-90 秒 GIF 放 README |
 | **没有 CI** | 测试要手动跑 | 加 GitHub Actions 是 30 分钟的事，但目前只有 1 个 contributor，收益有限 |
-| **没有评测集** | 只有 12 条自检，没有召回率 / 拒答准确率 / **漏答率** | 评测集是下一步重点。⚠️ 只测"拒答准不准"是自证式的 —— 阈值越调越严数字越好看、系统越废物，所以**必须同时测漏答率**（该答却拒答） |
+| **没有评测集** | 只有 13 条自检，没有召回率 / 拒答准确率 / **漏答率** | 评测集是下一步重点。⚠️ 只测"拒答准不准"是自证式的 —— 阈值越调越严数字越好看、系统越废物，所以**必须同时测漏答率**（该答却拒答） |
 | **语料是虚构的** | 10 条自己写的电商条款 | 换真实语料会让"0.90 是实测的"更难解释。**可控的假数据 > 不可控的真数据**，这个项目要证明的是机制，不是数据 |
 
 ### 下一步的顺序

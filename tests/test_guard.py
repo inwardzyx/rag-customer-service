@@ -7,10 +7,10 @@
     新版 assert                →  失败时 pytest 报 FAILED 并让退出码变 1，CI 能看到红
 
 跑法（在仓库根目录）：
-    D:/Python-project/.venv/Scripts/python.exe -m pytest tests/ -v
+    python -m pytest tests/ -v
 
 想顺便看"留了谁 / 拦了谁"：
-    D:/Python-project/.venv/Scripts/python.exe -m pytest tests/ -v -s
+    python -m pytest tests/ -v -s
     （-s = 不吞掉 print，报告会打出来）
 
 ★ 不需要 DEEPSEEK_API_KEY：

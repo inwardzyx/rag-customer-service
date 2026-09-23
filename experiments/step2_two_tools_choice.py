@@ -4,7 +4,7 @@ Step 2：拆开 tools_condition 这个黑盒 + 给模型【两个工具】让它
 
 跑法：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step2_two_tools_choice.py
+    python step2_two_tools_choice.py
 """
 from typing import Annotated, TypedDict
 

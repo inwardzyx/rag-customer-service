@@ -13,7 +13,7 @@ Step 5：入库把关（Ingest Guard）+ 重排序（Rerank）
 
 跑法（务必先关 trace，否则每次 LLM 调用都上报）：
     set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step5_ingest_guard_demo.py
+    python step5_ingest_guard_demo.py
 
 本文件会真调用 DeepSeek 若干次（rerank 打分 + 最终作答），成本不到一分钱。
 """
