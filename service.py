@@ -34,7 +34,13 @@ from typing import Optional
 
 # ⚠️ 必须在 import 之前：走国内镜像 + 指定模型缓存
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-CACHE_DIR = os.environ.get("FASTEMBED_CACHE_PATH", r"D:/Python-project/.cache/fastembed")
+# 缓存目录默认放在【用户主目录】下（Windows / Mac / Linux 通用）。
+#   想换位置就设环境变量 FASTEMBED_CACHE_PATH。
+#   os.path.expanduser("~") 会把 ~ 展开成当前用户的主目录，
+#   比写死 "D:/..." 好 —— 别人 clone 下来不会在你不存在的盘符上找目录。
+CACHE_DIR = os.environ.get(
+    "FASTEMBED_CACHE_PATH",
+    os.path.join(os.path.expanduser("~"), ".cache", "fastembed"))
 
 import numpy as np                                  # noqa: E402
 import jieba                                        # noqa: E402
@@ -80,6 +86,14 @@ MIN_LEN = 15
 DUP_THRESHOLD = 0.90
 PII_PATTERNS = [(r"1[3-9]\d{9}", "手机号"), (r"\d{17}[\dXx]", "身份证号"), (r"\d{16,19}", "银行卡号")]
 
+# 关掉 rerank 时，用【向量分】判断要不要拒答（精排分此时不存在）。
+# 同样是实测定的，不是拍脑袋：在本项目这 7 条语料上跑 12 个问题 ——
+#     该答的（7 题）向量分 0.6541 ~ 0.8425   ← 最低 0.6541
+#     该拒的（5 题）向量分 0.2619 ~ 0.4373   ← 最高 0.4373
+# 两边中间空着 0.22 的间隔，取中间值 0.55，离两边都留了余量。
+# ★ 和 DUP_THRESHOLD=0.90 是同一套做法：先量出分布，再取中间，不拍脑袋。
+VEC_REJECT_THRESHOLD = 0.55
+
 
 def norm(text):
     return re.sub(r"[\s\W_]+", "", text)
@@ -94,11 +108,31 @@ class RAG:
 
     def __init__(self):
         self.ready = False
+        self._llm = None          # 真正的大模型对象，第一次用到才建（见下面的 llm）
+
+    @property
+    def llm(self):
+        """大模型【第一次要用的时候才创建】。
+
+        @property 的作用：让 `rag.llm` 用起来像一个普通属性（不用加括号），
+        但每次访问它会走一遍这个函数 —— 也就是"用到才建、只建一次"。
+
+        为什么要这么绕，不在 startup() 里直接建？
+            ChatDeepSeek(...) 在【构造的时候】就会校验 DEEPSEEK_API_KEY，
+            没配 key 直接抛：
+                ValidationError: If using default api base, DEEPSEEK_API_KEY must be set.
+            那样一来，只想跑入库把关自检（这条路径压根用不到大模型）的人也会被卡住 ——
+            面试官 clone 下来第一步就失败，CI 也跑不了。
+        ★ 自检 / 测试这条路径全程不碰 llm，所以没 key 也能跑完。
+        """
+        if self._llm is None:
+            self._llm = ChatDeepSeek(model="deepseek-chat", temperature=0)
+        return self._llm
 
     def startup(self):
         t0 = time.time()
         self.model = TextEmbedding("BAAI/bge-small-zh-v1.5", cache_dir=CACHE_DIR)
-        self.llm = ChatDeepSeek(model="deepseek-chat", temperature=0)
+        # ★ 这里【故意不建 LLM】，原因见上面的 llm 属性
 
         kept, rejected = self._guard(RAW_DOCS)
         self.chunks = kept
@@ -326,11 +360,21 @@ def chat(req: ChatRequest):
                    for c, v, s, r in picked]
         ctx = [c for c, _, _, _ in picked]
     else:
-        picked = cands[:3]
+        # ★★ 关掉 rerank 时【照样要拒答】。
+        #    之前的写法是"没有分数可判断，只能照常生成" —— 那等于网页上取消勾选一下，
+        #    整个拒答机制就被绕过去了，而且 knowledge_hit 还是 true（调用方以为命中了）。
+        #    精排分不存在，就用向量分（0~1 的余弦相似度），阈值见 VEC_REJECT_THRESHOLD 的注释。
+        if not cands or cands[0][1] < VEC_REJECT_THRESHOLD:
+            return ChatResponse(
+                answer="知识库里没有能回答这个问题的资料，我不编。",
+                sources=[], took_ms=took(), rerank_used=False, knowledge_hit=False)
+
+        picked = [x for x in cands if x[1] >= VEC_REJECT_THRESHOLD][:3]
         sources = [Source(doc=f"{c['doc']}｜{c['clause']}", text=c["text"],
                           score=round(s, 3)) for c, s in picked]
         ctx = [c for c, _ in picked]
-        # 关掉 rerank 时没有分数可判断，只能照常生成（这也是为什么默认要开 rerank）
+        # 关掉 rerank 时用的是粗捞的向量分，比精排分粗（"意思接近但答非所问"更容易漏进来），
+        # 所以默认还是开着 rerank —— 关掉只是留一个对比开关，不是关闭防线。
 
     answer = rag.answer(req.question, ctx)
     return ChatResponse(answer=answer, sources=sources,
@@ -353,7 +397,7 @@ HTML_PAGE = """<!DOCTYPE html>
  .tag{display:inline-block;font-size:12px;background:#e8f0fe;color:#185FA5;border-radius:4px;padding:1px 6px;margin-right:6px}
 </style></head><body>
 <h2>客服知识库问答（RAG）</h2>
-<p style="color:#666;font-size:14px">LangGraph + bge-small-zh 检索 + 入库把关 + rerank + DeepSeek 生成</p>
+<p style="color:#666;font-size:14px">bge-small-zh 向量检索 + BM25 混合 + 入库把关 + 大模型精排 + DeepSeek 生成</p>
 <textarea id="q" placeholder="试试：已发货的订单退款要扣多少钱？ / 保修多久？ / 支持分期付款吗？"></textarea><br>
 <button onclick="ask()">提问</button>
 <label style="margin-left:12px;font-size:13px"><input type="checkbox" id="rr" checked> 启用 rerank</label>
