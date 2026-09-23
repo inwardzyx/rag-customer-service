@@ -12,6 +12,8 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
+from dotenv import load_dotenv
+load_dotenv()
 from langchain_deepseek import ChatDeepSeek
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages

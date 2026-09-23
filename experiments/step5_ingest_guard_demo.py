@@ -40,6 +40,8 @@ import env_compat                                   # noqa: E402  ★ 必须在 
 env_compat.ensure_mmh3()                            # 本机 DLL 被策略拦截时的降级方案，见 env_compat.py
 import numpy as np                              # noqa: E402
 from fastembed import TextEmbedding             # noqa: E402
+from dotenv import load_dotenv
+load_dotenv()
 from langchain_deepseek import ChatDeepSeek     # noqa: E402
 from langchain_core.messages import HumanMessage  # noqa: E402
 

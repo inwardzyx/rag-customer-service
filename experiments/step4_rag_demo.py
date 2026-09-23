@@ -516,6 +516,8 @@ print("      本例 recall@3 已经饱和，所以要看 recall@1 那一列的�
 sep("⑥ 接进 LangGraph：检索节点 → 回答节点")
 
 from langchain_core.messages import HumanMessage, SystemMessage   # noqa: E402
+from dotenv import load_dotenv
+load_dotenv()
 from langchain_deepseek import ChatDeepSeek                       # noqa: E402
 from langgraph.graph import END, START, StateGraph                # noqa: E402
 

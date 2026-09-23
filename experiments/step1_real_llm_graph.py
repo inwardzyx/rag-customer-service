@@ -32,6 +32,8 @@ class State(TypedDict):
 
 
 # ============ ③ 真 LLM：这是今天唯一的换血 ============
+from dotenv import load_dotenv
+load_dotenv()
 from langchain_deepseek import ChatDeepSeek
 
 llm = ChatDeepSeek(model="deepseek-chat", temperature=0)
