@@ -32,6 +32,17 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
+# 先读仓库根目录的 .env（没有这个文件就静默跳过，什么都不影响）。
+# 为什么用 .env 而不是 setx / export？
+#   · setx 是 Windows 专有命令，服务器（Linux）上不存在 —— 部署时那套直接失效
+#   · setx 设完要重开终端才生效，而且改的是系统级环境变量
+#   · .env 跟着项目走，clone 下来复制一份就能跑，三个平台一致
+# 已经有同名环境变量时不会覆盖它（load_dotenv 默认 override=False），
+# 所以想临时换 key，直接设环境变量比改文件方便。
+# 模板见 .env.example。
+from dotenv import load_dotenv                        # noqa: E402
+load_dotenv()
+
 # ⚠️ 必须在 import 之前：走国内镜像 + 指定模型缓存
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 # 缓存目录默认放在【用户主目录】下（Windows / Mac / Linux 通用）。

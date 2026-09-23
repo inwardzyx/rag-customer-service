@@ -16,7 +16,11 @@ RAG 概念拆解（从零讲，不需要先学任何东西）
 import os
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-CACHE_DIR = os.environ.get("FASTEMBED_CACHE_PATH", r"D:/Python-project/.cache/fastembed")
+# 缓存目录放用户主目录下 —— Windows / Mac / Linux 通用。
+# 写死 "D:/..." 的话，别人 clone 下来会在不存在的盘符上找目录。
+CACHE_DIR = os.environ.get(
+    "FASTEMBED_CACHE_PATH",
+    os.path.join(os.path.expanduser("~"), ".cache", "fastembed"))
 
 import sys                                          # 下面要把仓库根目录加进模块搜索路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

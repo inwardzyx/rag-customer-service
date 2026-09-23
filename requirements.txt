@@ -7,6 +7,11 @@ langchain-core==1.6.3
 langchain-deepseek==1.1.0
 langchain-text-splitters==1.1.2
 
+# 读 .env 文件（配密钥用，模板见 .env.example）
+# 注：它本来是 langchain 的间接依赖，这里显式写出来 ——
+#     直接 import 的东西就该直接声明，不能靠"别人会顺手装上"。
+python-dotenv==1.2.3
+
 # 中文分词（BM25 字面检索要用）
 jieba==0.42.1
 rank-bm25==0.2.2

@@ -23,9 +23,12 @@
 # 1. 装依赖
 pip install -r requirements.txt
 
-# 2. 配两个环境变量（Windows 用 setx，Mac/Linux 用 export）
-setx DEEPSEEK_API_KEY  sk-你的key
-setx HF_ENDPOINT       https://hf-mirror.com     # 国内拉 embedding 模型必须走镜像
+# 2. 配密钥：复制模板成 .env，再填上真实值
+copy .env.example .env          # Mac/Linux 用: cp .env.example .env
+# 然后打开 .env，把 DEEPSEEK_API_KEY 换成你的真实 key。
+# .env 已被 .gitignore 挡住，不会进 git；.env.example 里没有真密钥，可以提交。
+# （为什么不用 setx？setx 是 Windows 专有命令，服务器上不存在，
+#   而且设完要重开终端；.env 跟着项目走，clone 下来复制一份就能跑。）
 
 # 3. 跑自检（不起服务，验证入库把关 + 拒答短路对不对）
 python -m pytest tests/ -v
