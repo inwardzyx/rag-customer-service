@@ -170,6 +170,33 @@ def test_near_dup_after_earlier_rejection(rag):
         f"C2 没能和 C 比对。实际保留 {sorted(kept_clauses)}")
 
 
+def test_short_text_rejected(rag):
+    """★ 补盲区：太短碎屑关（MIN_LEN）在当前真实语料里从不触发
+    （所有块都 > 15 字），所以这个关要是被删了，最终 7/3 数字不变、
+    上面所有断言全绿 —— 等于没测。这里自己造一条短文本，确保它真的在拦。"""
+    docs = [dict(doc="短.md", clause="S", version="2026-01-01", source="测试",
+                 text="你好")]
+    kept, rejected = rag._guard(docs)
+    assert kept == [], f"太短的文本不该被放行：{kept}"
+    assert any("太短" in r for _, r in rejected), (
+        f"太短关没拦住「你好」，原因：{[r for _, r in rejected]}")
+
+
+def test_exact_duplicate_rejected(rag):
+    """★ 补盲区：完全重复（md5 相同）关在当前真实语料里也不触发
+    （没有任何两块一字不差）。删了它最终数字同样不变，断言全绿。
+    这里造两条完全相同的文本，确认后一条被『完全重复』拦下、前一条留下。"""
+    same = "未发货订单可全额退款，不扣任何费用，审核通过后 24 小时内到账。"
+    docs = [
+        dict(doc="dup.md", clause="A", version="2026-01-01", source="测试", text=same),
+        dict(doc="dup.md", clause="A", version="2026-01-01", source="测试", text=same),
+    ]
+    kept, rejected = rag._guard(docs)
+    assert len(kept) == 1, f"完全相同的两块应只留一条，实际留了 {len(kept)}"
+    assert any("完全重复" in r for _, r in rejected), (
+        f"完全重复关没拦住，原因：{[r for _, r in rejected]}（被近似重复关兜底说明完全重复关失效）")
+
+
 # ==================================================================
 # ④ 拒答短路：这是整个项目最该被守住的承诺
 # ==================================================================
