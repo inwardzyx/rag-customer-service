@@ -30,6 +30,7 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 # 先读仓库根目录的 .env（没有这个文件就静默跳过，什么都不影响）。
@@ -58,6 +59,7 @@ import jieba                                        # noqa: E402
 import uvicorn                                      # noqa: E402
 import env_compat                                   # noqa: E402  ★ 必须放在 import fastembed 之前
 env_compat.ensure_mmh3()                            # 本机 DLL 被策略拦截时的降级方案，见 env_compat.py
+from kb.loader import load_documents                # noqa: E402  知识库从 docs/ 加载，不再写死 RAW_DOCS
 from fastapi import FastAPI                         # noqa: E402
 from fastapi.responses import HTMLResponse          # noqa: E402
 from fastembed import TextEmbedding                 # noqa: E402
@@ -67,31 +69,14 @@ from pydantic import BaseModel, Field               # noqa: E402
 from rank_bm25 import BM25Okapi                     # noqa: E402
 
 # ==================================================================
-# ① 知识库 + 入库把关（和 Step 5 完全一样的逻辑，这里精简成一份）
+# ① 知识库 + 入库把关
+#    知识库不再写死在代码里 —— 改成从 docs/ 目录加载（见 kb/loader.py）。
+#    docs/kb/    = 已审核、可直接用的干净条款
+#    docs/inbox/ = 待审核、可能含脏数据的副本（旧版 / 话术库改写版）
+#    两者都丢进同一套「入库把关」(_guard)，脏的自然被拦，干净的自然留下。
+#    想加文档？往 docs/ 扔一个 .md 就行，不用改代码。
 # ==================================================================
-RAW_DOCS = [
-    dict(doc="退款政策.md", clause="退款-已发货", version="2026-03-01", source="官网帮助中心",
-         text="已发货的订单申请退款，需扣除 10 元运费，其余金额在 1 到 3 个工作日内原路退回。"),
-    dict(doc="退款政策.md", clause="退款-未发货", version="2026-03-01", source="官网帮助中心",
-         text="未发货订单可全额退款，不扣任何费用，审核通过后 24 小时内到账。"),
-    dict(doc="发货时效.md", clause="现货发货", version="2026-02-10", source="官网帮助中心",
-         text="现货商品在付款后 48 小时内发出，预售商品以商品页面标注的发货时间为准。"),
-    dict(doc="发票与保修.md", clause="保修范围", version="2026-01-20", source="官网帮助中心",
-         text="商品享受一年整机保修，保修期自签收次日开始计算，人为损坏不在保修范围内。"),
-    dict(doc="会员等级与权益.md", clause="升级规则", version="2026-02-01", source="官网帮助中心",
-         text="普通会员累计消费满 1000 元自动升级为 VIP 会员，等级在达到条件的次日生效。"),
-    dict(doc="跨境订单税费.md", clause="税费缴纳", version="2026-01-05", source="官网帮助中心",
-         text="跨境订单需缴纳进口税，税费在清关时由承运商代收，具体金额以海关核定为准。"),
-    dict(doc="物流查询与异常.md", clause="单号查询", version="2026-02-20", source="官网帮助中心",
-         text="物流单号在发货后 24 小时内可查，超过 72 小时未更新可联系客服发起查件。"),
-    # ↓ 下面是脏数据，会被入库把关拦掉（故意留着，证明关卡真的在工作）
-    dict(doc="退款政策.md", clause="退款-已发货", version="2024-05-01", source="旧版帮助中心（已下线）",
-         text="已发货订单申请退款，需扣除订单金额 30% 的手续费，退款周期 15 个工作日。"),
-    dict(doc="售后联系方式.md", clause="客户信息", version="2026-02-01", source="客服工单导出",
-         text="客户张先生的联系方式是 13812345678，身份证号 440301199001011234，请妥善保管。"),
-    dict(doc="退款政策.md", clause="退款-已发货", version="2026-03-01", source="客服话术库",
-         text="已发货订单若要退款，会扣 10 元运费，剩下的钱 1 至 3 个工作日退回原支付账户。"),
-]
+DOCS_DIR = Path(__file__).parent / "docs"
 
 MIN_LEN = 15
 DUP_THRESHOLD = 0.90
@@ -153,7 +138,18 @@ class RAG:
         self.model = TextEmbedding("BAAI/bge-small-zh-v1.5", cache_dir=CACHE_DIR)
         # ★ 这里【故意不建 LLM】，原因见上面的 llm 属性
 
-        kept, rejected = self._guard(RAW_DOCS)
+        # ★ 知识库从 docs/ 加载（不再写死 RAW_DOCS）：
+        #   kb 先、inbox 后，保证「干净条款先入、脏副本作为重复/旧版被拦」，
+        #   而不是反过来把干净条款挤掉。loader 不碰模型，可独立单测。
+        raw_docs, load_errors = load_documents(DOCS_DIR)
+        if load_errors:
+            print(f"⚠ 有 {len(load_errors)} 个文件解析失败（缺元信息/编码错），已跳过：")
+            for e in load_errors:
+                print(f"   - {e}")
+        if not raw_docs:
+            print("⚠ 没有从 docs/ 加载到任何文档！检查 DOCS_DIR 路径与文件元信息。")
+
+        kept, rejected = self._guard(raw_docs)
         self.chunks = kept
         self.rejected = rejected
         self.vectors = np.array(
