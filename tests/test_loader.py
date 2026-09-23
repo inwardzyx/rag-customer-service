@@ -13,7 +13,8 @@ import os
 import sys
 import tempfile
 
-# 把仓库根目录加进模块搜索路径，才能 import kb.loader 和 service
+# 把仓库根目录加进模块搜索路径，才能 import kb.loader
+# （本文件【不】import service —— 那会连带加载 embedding 模型，就不便宜了）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from kb.loader import load_documents, _parse_frontmatter   # noqa: E402

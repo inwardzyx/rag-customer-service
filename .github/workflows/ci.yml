@@ -1,0 +1,79 @@
+# ==================================================================
+# CI —— 每次 push / PR 自动跑测试
+# ==================================================================
+# 为什么拆成两个 job，而不是一个：
+#   tests/ 里的测试成本差一个数量级 ——
+#     test_loader.py                  只解析文件，不碰 embedding 模型 → 几秒
+#     test_guard.py / test_eval_set.py 要加载 91MB 的 bge 模型      → 十几秒起
+#   合成一个 job 的话，改一行 loader 也要等模型下载完才能知道对不对。
+#   拆开之后：快 job 很快给出答案，慢 job 并行跑，互不拖累。
+#
+# ★ 刻意【不配】DEEPSEEK_API_KEY：
+#   tests/test_guard.py 自带假模型（monkeypatch 注入），测试里一条都不调真生成模型。
+#   所以 CI 不需要任何密钥 —— 也就没有"密钥泄漏到 CI 日志"这条风险。
+#
+# ★ 慢 job 的 pip 那一步，顺带就是 Dockerfile 里 pip 层的【预演】：
+#   同样是 Linux + Python 3.14。它红了 = Docker 也会红，
+#   而在这里改（2 分钟）远比在容器里手调（半天）便宜。
+#   所以 CI 不只是"质量门"，还是发现部署问题最便宜的探针。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:            # 允许在 Actions 页面手点运行，方便调试
+
+jobs:
+  # ----------------------------------------------------------------
+  # 快 job：纯解析，不装模型
+  # ----------------------------------------------------------------
+  fast:
+    name: 快 job · 加载器（不装模型）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"      # ★ 引号不能省：不加引号 3.14 会被 YAML 当浮点数，成了 3.1
+
+      - name: 只装测试框架（kb/loader.py 只用标准库）
+        run: python -m pip install --upgrade pip pytest
+
+      - name: 跑加载器测试
+        run: python -m pytest tests/test_loader.py -v
+
+  # ----------------------------------------------------------------
+  # 慢 job：装全套依赖 + 下模型，跑质量门
+  # ----------------------------------------------------------------
+  full:
+    name: 慢 job · 把关 + 评测门禁（装模型）
+    runs-on: ubuntu-latest
+    env:
+      # ★ 这行必须加：service.py 用 os.environ.setdefault 把默认值设成
+      #   https://hf-mirror.com（国内镜像）。GitHub 的 runner 在海外，
+      #   走国内镜像大概率慢或超时。因为源码用的是 setdefault，
+      #   这里设个环境变量就能覆盖它 —— 零改代码。
+      HF_ENDPOINT: https://huggingface.co
+      # 测试不调生成模型，不需要往 LangSmith 上报 trace
+      LANGSMITH_TRACING: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip                  # 按 requirements.txt 的内容哈希缓存 wheel
+
+      - name: 装依赖（同时是 Dockerfile pip 层的预演）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: 跑把关 + 评测门禁
+        # 质量门是【零容忍】的：离线层不调 LLM，结果是确定性的，
+        # 数字一变就是真的变了（Recall / 漏答率的断言见 tests/test_eval_set.py）。
+        # 环境性失败（装不上、下不动模型）应当改版本，永远不要用 skip 掩盖。
+        run: python -m pytest tests/test_guard.py tests/test_eval_set.py -v

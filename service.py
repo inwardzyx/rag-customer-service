@@ -161,7 +161,25 @@ class RAG:
         self.boot_time = time.time() - t0
 
     def _guard(self, docs):
-        """五道关卡 + 版本冲突（逻辑和 Step 5 一样）"""
+        """五道关卡 + 版本冲突（关卡顺序和 experiments/step5_ingest_guard_demo.py 一致）。
+
+        关卡 1 太短碎屑 → 关卡 2 完全重复 → 关卡 3 近似重复 → 关卡 4 个人隐私
+        → 关卡 5 缺少来源/日期（出问题无法追溯）。
+
+        ★ 关卡 5 是 2026-09-23 补上的，补的理由值得记一笔：
+          之前这里只移植了前 4 关，docstring 却写着"五道关卡" ——
+          **文档说五关、实现只有四关**，这本身就是缺陷：读者以为有兜底，其实没有。
+          当时没移植是怕"来源白名单"把自有文档也拦掉；去读 step5 的代码
+          （step5_ingest_guard_demo.py:212）才发现，它只判断 source/version
+          **是否为空**，压根不做白名单 —— 自有文档本来都带这两个字段，
+          移植过来零误伤。别靠记忆判断，去看实现。
+
+        ⚠️ 关卡 5 的边界要说清楚，别当它是万能：
+          它只保证 source/version 字段【非空】，不保证 source【可信】。
+          一份自己填了 source=官网帮助中心 的文档照样能过这一关。
+          所以 docs/inbox/ 依然是「待人工审核区」—— 审完才移进 docs/kb/，
+          不要把 inbox 当可信来源（入库入口见 kb/loader.py）。
+        """
         kept, rejected = [], []
         for c in docs:
             if len(c["text"].strip()) < MIN_LEN:
@@ -202,6 +220,18 @@ class RAG:
             else:
                 stage4.append(c)
         kept = stage4
+
+        # 关卡5 缺少来源/日期：连出处都记不下来的内容，出了纠纷无法追溯，不收。
+        #   和 step5 的差别只有一处：这里用 c.get(...) 而不是 c["source"]。
+        #   万一调用方递进来的 dict 少一个键，应当【拦下并说明原因】，
+        #   而不是抛 KeyError 把整个服务带崩 —— 把关的失败方式也该是"拦"，不是"炸"。
+        stage5 = []
+        for c in kept:
+            if not c.get("source") or not c.get("version"):
+                rejected.append((c, "缺少来源/日期，出问题无法追溯"))
+            else:
+                stage5.append(c)
+        kept = stage5
 
         # 版本冲突：同一 (doc, clause) 只留 version 最大的
         # ★ 这里的 key 必须是 (文档, 条款) 两样一起，不能只用文档名！

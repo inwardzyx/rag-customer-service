@@ -197,6 +197,36 @@ def test_exact_duplicate_rejected(rag):
         f"完全重复关没拦住，原因：{[r for _, r in rejected]}（被近似重复关兜底说明完全重复关失效）")
 
 
+def test_missing_source_rejected(rag):
+    """★ 补盲区：关卡5「缺少来源/日期」在真实语料里同样从不触发
+    （10 条都带 source + version），删掉它最终 7/3 数字不变、上面断言全绿。
+
+    这条同时守着一个"文档与实现不一致"的历史缺陷：service.py 的 docstring
+    曾写着"五道关卡"，实现却只有 4 关 + 版本冲突 —— 读者以为有兜底，其实没有。
+    （当年没移植是误以为第 5 关是"来源白名单"，去读 step5 才发现只是判空。）
+
+    ⚠️ 别误解这一关的强度：它只保证字段【非空】，不保证来源【可信】。
+    自己填个 source=官网帮助中心 照样能过 —— 所以 docs/inbox/ 仍需人工审核。
+    """
+    docs = [dict(doc="无来源.md", clause="N", version="", source="",
+                 text="现货商品在付款后 48 小时内发出，预售商品以页面标注的发货时间为准。")]
+    kept, rejected = rag._guard(docs)
+    assert kept == [], f"缺来源/日期的文本不该被放行：{kept}"
+    assert any("来源" in r for _, r in rejected), (
+        f"关卡5 没拦住缺来源的条目，原因：{[r for _, r in rejected]}")
+
+
+def test_guard_survives_missing_keys(rag):
+    """★ 关卡5 用 .get() 而不是 c["source"] 的原因：缺键时要『拦下并说明』，
+    而不是抛 KeyError 把服务带崩 —— 把关的失败方式也该是"拦"，不是"炸"。"""
+    docs = [dict(doc="残.md", clause="B",
+                 text="跨境订单需缴纳进口税，税费在清关时由承运商代收，以海关核定为准。")]
+    kept, rejected = rag._guard(docs)          # 缺 version / source 两个键，不该抛异常
+    assert kept == [], f"缺键的条目不该被放行：{kept}"
+    assert any("来源" in r for _, r in rejected), (
+        f"缺键时应被关卡5 拦下，原因：{[r for _, r in rejected]}")
+
+
 # ==================================================================
 # ④ 拒答短路：这是整个项目最该被守住的承诺
 # ==================================================================
