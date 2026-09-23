@@ -13,9 +13,8 @@ Step 6：把 RAG 整条链包成 HTTP 服务（FastAPI）
     uvicorn   = 真正跑起来的服务器（FastAPI 只负责"定义"，uvicorn 负责"运行"）
     pydantic  = 校验请求体的工具（规定"你 POST 过来的 JSON 必须长这样"）
 
-跑法（务必先关 trace）：
-    set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step6_fastapi_service.py
+跑法（务必先关 trace，在仓库根目录跑）：
+    D:/Python-project/.venv/Scripts/python.exe service.py
 
 跑起来后：
     打开浏览器访问 http://127.0.0.1:8000    ← 一个能聊天的网页
@@ -38,13 +37,17 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 CACHE_DIR = os.environ.get("FASTEMBED_CACHE_PATH", r"D:/Python-project/.cache/fastembed")
 
 import numpy as np                                  # noqa: E402
+import jieba                                        # noqa: E402
 import uvicorn                                      # noqa: E402
+import env_compat                                   # noqa: E402  ★ 必须放在 import fastembed 之前
+env_compat.ensure_mmh3()                            # 本机 DLL 被策略拦截时的降级方案，见 env_compat.py
 from fastapi import FastAPI                         # noqa: E402
 from fastapi.responses import HTMLResponse          # noqa: E402
 from fastembed import TextEmbedding                 # noqa: E402
 from langchain_core.messages import HumanMessage    # noqa: E402
 from langchain_deepseek import ChatDeepSeek         # noqa: E402
 from pydantic import BaseModel, Field               # noqa: E402
+from rank_bm25 import BM25Okapi                     # noqa: E402
 
 # ==================================================================
 # ① 知识库 + 入库把关（和 Step 5 完全一样的逻辑，这里精简成一份）
@@ -102,6 +105,9 @@ class RAG:
         self.rejected = rejected
         self.vectors = np.array(
             list(self.model.passage_embed([c["text"] for c in kept])), dtype="float32")
+        # BM25 索引（字面检索）：jieba 分词后建索引，和向量检索互补
+        #   向量看"意思像不像"，BM25 看"字面有没有出现" —— 两者都会单用时翻车，见 search() 注释
+        self.bm25 = BM25Okapi([list(jieba.cut_for_search(c["text"])) for c in kept])
         self.ready = True
         self.boot_time = time.time() - t0
 
@@ -163,10 +169,33 @@ class RAG:
         return kept, rejected
 
     def search(self, query, k=5):
+        """混合检索：向量（看意思）+ BM25（看字面），用 RRF 融合两路的排名
+
+        为什么不只用向量？（都是本项目实测过的翻车现场）
+            · "东西坏了能修吗"（文档里写的是"保修"）→ 向量能找到，BM25 找不到
+            · "A1001 运单号"（三条只差编号）→ BM25 稳，向量第一二名只差 0.008（拿不准）
+        两路互补，谁也别丢。
+
+        ★ RRF（倒数排名融合）：每路的贡献是 1/(60+名次)。
+          用【名次】而不是【原始分数】，是因为向量分在 0~1 之间、BM25 分能到十几，
+          直接相加的话 BM25 会把向量完全淹没 —— 不同量纲的分数不能相加，这是常见踩坑。
+        """
         q = np.array(list(self.model.query_embed([query])), dtype="float32")[0]
-        scores = self.vectors @ q
-        order = np.argsort(-scores)[:k]
-        return [(self.chunks[i], float(scores[i])) for i in order]
+        vec_scores = self.vectors @ q                       # 每块与问题的向量相似度
+        vec_order = np.argsort(-vec_scores)                 # 按分数从高到低的下标
+
+        tokens = list(jieba.cut_for_search(query))          # 中文按"检索粒度"分词
+        bm25_order = np.argsort(-self.bm25.get_scores(tokens))
+
+        rrf = {}
+        for rank, idx in enumerate(vec_order):
+            rrf[idx] = rrf.get(idx, 0.0) + 1.0 / (60 + rank)
+        for rank, idx in enumerate(bm25_order):
+            rrf[idx] = rrf.get(idx, 0.0) + 1.0 / (60 + rank)
+
+        top = sorted(rrf.items(), key=lambda kv: kv[1], reverse=True)[:k]
+        # 返回向量分只是为了展示（网页上那个"向量分"标签），真正决定顺序的是 RRF
+        return [(self.chunks[idx], float(vec_scores[idx])) for idx, _ in top]
 
     def rerank(self, query, candidates):
         """让大模型给每条候选打分，返回 [(块, 向量分, 精排分, 理由)]，按精排分从高到低
@@ -244,6 +273,9 @@ class ChatResponse(BaseModel):
     sources: list[Source]
     took_ms: int
     rerank_used: bool
+    # 是否命中了知识库。False = 库里没有，已拒答，一条资料都没喂给模型。
+    # ★ 这个字段是"可追溯"的一部分：调用方能明确区分「答错了」和「拒绝作答」。
+    knowledge_hit: bool = True
 
 
 @app.get("/health")
@@ -274,11 +306,21 @@ def chat(req: ChatRequest):
 
     cands = rag.search(req.question, k=req.top_k)
 
+    took = lambda: int((time.time() - t0) * 1000)          # 匿名函数，算"到现在用了多少毫秒"
+
     if req.use_rerank:
         ranked = rag.rerank(req.question, cands)          # [(块, 向量分, 精排分, 理由)]
+
+        # ★★ 拒答硬短路：连最高分的候选都不到 5 分 = 库里根本没这个东西。
+        #    这时【直接返回，压根不调用生成模型】。
+        #    之前的写法是"全部低分也硬塞第一条进去"，寄希望于提示词让模型拒答 ——
+        #    但提示词会漏，喂了假资料模型就会照着编。真正可靠的做法是【不喂】。
+        if not ranked or ranked[0][2] < 5:
+            return ChatResponse(
+                answer="知识库里没有能回答这个问题的资料，我不编。",
+                sources=[], took_ms=took(), rerank_used=True, knowledge_hit=False)
+
         picked = [x for x in ranked if x[2] >= 5][:3]     # 只留 5 分以上的，最多 3 条
-        if not picked:                                    # 全部低分 = 库里没有相关资料
-            picked = ranked[:1]
         sources = [Source(doc=f"{c['doc']}｜{c['clause']}", text=c["text"],
                           score=round(v, 3), rerank_score=s, reason=r)
                    for c, v, s, r in picked]
@@ -288,11 +330,11 @@ def chat(req: ChatRequest):
         sources = [Source(doc=f"{c['doc']}｜{c['clause']}", text=c["text"],
                           score=round(s, 3)) for c, s in picked]
         ctx = [c for c, _ in picked]
+        # 关掉 rerank 时没有分数可判断，只能照常生成（这也是为什么默认要开 rerank）
 
     answer = rag.answer(req.question, ctx)
     return ChatResponse(answer=answer, sources=sources,
-                        took_ms=int((time.time() - t0) * 1000),
-                        rerank_used=req.use_rerank)
+                        took_ms=took(), rerank_used=req.use_rerank)
 
 
 # ==================================================================
@@ -328,6 +370,10 @@ async function ask(){
     body:JSON.stringify({question:q,use_rerank:rr})});
   const d=await r.json();
   a.textContent=d.answer;
+  if(d.knowledge_hit===false){
+    s.innerHTML='<p style="font-size:13px;color:#b45f04;margin-top:12px">未命中知识库 · 已拒绝作答（一条资料都没喂给模型）</p>';
+    return;
+  }
   s.innerHTML='<p style="font-size:13px;color:#888;margin-top:12px">用时 '+d.took_ms+' ms　引用资料：</p>'+
     (d.sources||[]).map(x=>'<div class="src"><span class="tag">'+x.doc+'</span>'+
       (x.rerank_score!=null?'<span class="tag">精排 '+x.rerank_score+' 分</span>':'')+

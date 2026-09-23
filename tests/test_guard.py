@@ -6,9 +6,8 @@ Step 6 的【把关逻辑自检脚本】
     起服务要占端口、要等模型加载、看完还得手动 Ctrl+C。
     而这个脚本只做一件事：把 step6 里的入库把关跑一遍，把"留下谁 / 拦了谁"打印出来。
 
-用法：
-    set LANGSMITH_TRACING=false
-    D:/Python-project/.venv/Scripts/python.exe step6_guard_check.py
+用法（在仓库根目录跑）：
+    D:/Python-project/.venv/Scripts/python.exe tests/test_guard.py
 
 看什么：
     1. kept 里必须同时有【退款-已发货】和【退款-未发货】两条
@@ -17,13 +16,19 @@ Step 6 的【把关逻辑自检脚本】
 """
 
 import os
+import sys
 
 # 这两行必须放在 import 项目模块之前：
 # os.environ 是"进程的环境变量字典"，这里改的是当前这个 Python 进程自己的那份。
 os.environ["LANGSMITH_TRACING"] = "false"          # 自检不调大模型，关掉 trace 免得联网卡住
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-import step6_fastapi_service as svc                # 导入不会启动服务（因为有 __main__ 保护）
+# sys.path 是"Python 去哪些目录找模块"的列表。
+# 本文件在 tests/ 子目录里，而 service.py 在上一层，所以需要把上一层加进去。
+# __file__ = 当前文件的路径；dirname 取它所在目录；再 dirname 一次 = 上一层。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import service as svc                              # 导入不会启动服务（因为有 __main__ 保护）
 
 print("正在加载 embedding 模型（第一次慢，之后走缓存）……")
 svc.rag.startup()

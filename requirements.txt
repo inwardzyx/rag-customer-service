@@ -12,7 +12,9 @@ jieba==0.42.1
 rank-bm25==0.2.2
 
 # embedding 模型加载（bge-small-zh-v1.5）
-fastembed==0.8.0
+# 注：fastembed 会依赖 mmh3；若本机应用控制策略拦掉 mmh3 的 DLL，
+#     项目里的 env_compat.py 会用纯 Python 版兜底，不影响运行。
+fastembed==0.8.1
 onnxruntime==1.30.0
 numpy==2.5.3
 

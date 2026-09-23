@@ -30,6 +30,10 @@ from typing import TypedDict
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 CACHE_DIR = os.environ.get("FASTEMBED_CACHE_PATH", r"D:/Python-project/.cache/fastembed")
 
+import sys                                          # 下面要把仓库根目录加进模块搜索路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import env_compat                                   # noqa: E402  ★ 必须在 import fastembed 之前
+env_compat.ensure_mmh3()                            # 本机 DLL 被策略拦截时的降级方案，见 env_compat.py
 import numpy as np                              # noqa: E402
 from fastembed import TextEmbedding             # noqa: E402
 from langchain_deepseek import ChatDeepSeek     # noqa: E402

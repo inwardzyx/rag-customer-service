@@ -1,12 +1,13 @@
-# 客服知识库问答（RAG 服务）
+# 客服知识库问答：**一个不会瞎说的 RAG 服务**
 
 > **仓库地址**：<https://github.com/inwardzyx/rag-customer-service>
 
-一个能跑起来的**检索增强生成（RAG）完整链路**：从"接大模型"一路做到"HTTP 服务 + 网页聊天框"。
-核心不在"用了多少框架"，而在**每一步为什么要这么做、翻过什么车、怎么修的**。
+大多数 RAG demo 的目标是"答得出来"，这个项目的目标是 **"答不出来的时候敢说不知道"**。
+完整链路（接模型 → 工具 → 检索 → 入库把关 → 精排 → HTTP 服务）都跑通了，
+但重点在两件事：**垃圾数据不让它进库**、**库里没有就不许它编**。
 
 > 数据集是 10 份虚构的电商客服文档（退款、发货、保修、税费、物流……），
-> 故意混进脏数据（旧版条款、重复话术、客户手机号/身份证）来验证入库把关真的在工作。
+> 故意混进脏数据（旧版条款、同义改写的话术、客户手机号/身份证）来验证把关真的在工作。
 
 ---
 
@@ -20,48 +21,77 @@ pip install -r requirements.txt
 setx DEEPSEEK_API_KEY  sk-你的key
 setx HF_ENDPOINT       https://hf-mirror.com     # 国内拉 embedding 模型必须走镜像
 
-# 3. 起服务
-python step6_fastapi_service.py
+# 3. 跑自检（不起服务，10 秒验证入库把关对不对）
+python tests/test_guard.py
+
+# 4. 起服务
+python service.py
 ```
 
-打开 <http://127.0.0.1:8000> 就是聊天页面，
-<http://127.0.0.1:8000/docs> 是自动生成的接口文档。
+打开 <http://127.0.0.1:8000> 是聊天页面，<http://127.0.0.1:8000/docs> 是自动生成的接口文档。
 
 ---
 
 ## 它长什么样
 
 ```
-                    ┌─────────────── 启动时做一次 ───────────────┐
-  知识库文档  ──→   切块 → embedding → 入库把关（5 道关卡）→ 向量库
-                    └───────────────────────────────────────────┘
+              ┌────────────── 启动时做一次 ──────────────┐
+ 知识库文档 ──→  入库把关（5 道关卡）→ embedding → 向量库 + BM25 索引
+              └──────────────────────────────────────────┘
+                                              │
+ 用户提问 ──→ 向量检索 ─┐
+              BM25   ─┴─→ RRF 融合 → 粗捞 top-5 → 大模型精排 → 取 top-3
                                                       │
-  用户提问  ──→  embedding ──→ 粗捞 top-5 ──→ rerank 精排 ──→ 取 top-3
-                                                      │
-                                                      ↓
-                                              大模型看着资料作答
-                                                      │
-                                                      ↓
-                                          答案 + 引用出处（可溯源）
+                                              ┌───────┴────────┐
+                                         最高分 < 5        最高分 ≥ 5
+                                              │                │
+                                      直接拒答（不调模型）  看着资料作答 + 引用出处
 ```
 
-**一句话总结这条链**：先粗捞（快、宁可捞错也别漏），再精排（慢、只挑最相关的），
-最后让大模型**只看着资料回答**，资料里没有就明确说"不知道"。
+**两道防线**：
+
+| 防线 | 建在哪 | 拦什么 |
+|---|---|---|
+| 入库把关 | 数据**进来之前** | 脏数据（重复、隐私、旧版本）根本进不了库 |
+| 拒答硬短路 | 答案**出去之前** | 库里没有相关资料时，一条都不喂给模型 |
 
 ---
 
-## 六个文件，一步一步长出来的
+## 拒答是怎么做到"硬"的
+
+关键不在提示词写得多好，而在**低分时压根不调用生成模型**：
+
+```python
+if not ranked or ranked[0][2] < 5:        # 连最高分的候选都不到 5 分
+    return ChatResponse(answer="知识库里没有能回答这个问题的资料，我不编。",
+                        sources=[], knowledge_hit=False)
+```
+
+对比一下两种写法的差别：
+
+| 写法 | 结果 |
+|---|---|
+| 硬塞一条低分资料进去，指望提示词让模型拒答 | 提示词会漏，**喂了假资料模型就会照着编** |
+| 一条都不喂，直接返回（本项目） | 物理上不可能产生幻觉 —— 没东西可编 |
+
+接口响应里有 `knowledge_hit` 字段，调用方能明确区分「答错了」和「拒绝作答」。
+实测：命中时约 2.8 秒，拒答时约 1.3 秒（省掉了生成那一次调用）。
+
+---
+
+## 代码是怎么长出来的（`experiments/` 里保留了每一步）
 
 | 文件 | 这一步解决什么 | 关键收获 |
 |---|---|---|
-| `step1_real_llm_graph.py` | 把真实大模型接进 LangGraph 图 | 模型调用是有延迟和失败的外部依赖，不是函数 |
-| `step2_two_tools_choice.py` | 让模型自己选该调哪个工具 | `bind_tools` 返回的是**新对象**，不是原地改 |
-| `step3_real_tools.py` | 真的去读文件 | 工具必须做参数校验（防路径穿越、目录白名单） |
-| `step4_rag_demo.py` | 文档切块 + 向量检索 + 混合检索 | 光看字面（BM25）和光看语义（向量）都会翻车 |
-| `rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
-| `step5_ingest_guard_demo.py` | **入库前把关**（本项目重点） | 垃圾进 = 幻觉出，必须在入口拦 |
-| `step6_fastapi_service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
-| `step6_guard_check.py` | 把关逻辑自检（不起服务也能跑） | 把"应该发生的事"写成断言，改坏了立刻报错 |
+| `experiments/step1_real_llm_graph.py` | 把真实大模型接进 LangGraph 图 | 模型调用是有延迟和失败的外部依赖，不是函数 |
+| `experiments/step2_two_tools_choice.py` | 让模型自己选该调哪个工具 | `bind_tools` 返回的是**新对象**，不是原地改 |
+| `experiments/step3_real_tools.py` | 真的去读文件 | 工具必须做参数校验（防路径穿越、目录白名单） |
+| `experiments/step4_rag_demo.py` | 文档切块 + 向量检索 + 混合检索 | 光看字面（BM25）和光看语义（向量）都会翻车 |
+| `experiments/rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
+| `experiments/step5_ingest_guard_demo.py` | **入库前把关** | 垃圾进 = 幻觉出，必须在入口拦 |
+| `service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
+| `tests/test_guard.py` | 把关逻辑自检（不起服务也能跑） | 把"应该发生的事"写成断言，改坏了立刻报错 |
+| `env_compat.py` | 绕开本机 DLL 被策略拦截的坑 | 见下方"踩过的坑" |
 
 ---
 
@@ -80,9 +110,12 @@ python step6_fastapi_service.py
 > **修过一个真 bug**：版本冲突关一开始只按「文档名」分组，
 > 结果 `退款政策.md` 里【已发货】和【未发货】两条完全不同的规定被当成"同一条的新旧版"，
 > 互相挤掉，库里凭空少一条规则。
-> 改成按 **(文档 + 条款)** 分组后修复 —— `step6_guard_check.py` 里有对应的回归断言。
+> 改成按 **(文档 + 条款)** 分组后修复 —— `tests/test_guard.py` 里有对应的回归断言。
 
 访问 `/guard-report` 能看到"哪条被拦、为什么"，不用翻日志猜。
+
+**0.90 这个阈值不是拍脑袋定的**：在同批语料上实测，同义改写块之间相似度 0.927，
+不同义的块之间 0.785，取中间值 0.90 才能既拦住重复又不误伤。
 
 ---
 
@@ -91,31 +124,36 @@ python step6_fastapi_service.py
 | 问题 | 回答 | 表现 |
 |---|---|---|
 | 已发货的订单退款要扣多少钱？ | 需扣除 10 元运费 | 命中正确条款，精排 10 分 |
-| 还没发货的订单能全额退款吗？ | 可全额退，不扣费，24 小时到账 | 命中正确条款（修 bug 前答不出） |
-| 支持分期付款吗？ | 资料里没有提到，我不知道 | **库里没有就直说，不瞎编** |
+| 东西坏了能修吗？ | 保修期内非人为损坏可修，保修一年 | 文档里没有"修"字，靠语义检索命中，精排 8 分 |
+| 支持分期付款吗？ | 知识库里没有能回答这个问题的资料，我不编 | `knowledge_hit=false`，**未调用生成模型** |
 
-最后一行是关键：防幻觉不是靠"提示词写得好"，而是靠
-**rerank 给出低分 → 不喂资料 → 明确拒答** 这条硬链路。
+第二行说明为什么要混合检索（字面匹配会漏），第三行说明为什么要拒答短路（宁可不答也别编）。
 
 ---
 
 ## 我踩过的坑（都写在代码注释里）
 
 - **LangSmith 端点是 `api.smith.langchain.com`**，写成 `api.sm.` 连不通
-- **FAISS 的 DLL 会被公司/学校的应用控制策略拦**，代码里做了自动降级到 numpy 的实现
 - **embedding 模型要走 `HF_ENDPOINT=https://hf-mirror.com`**，直连 huggingface.co 超时
 - **模型缓存别删**（默认 `~/.cache/fastembed`），第一次下载慢，之后秒开
 - **跑练习脚本前关掉 trace**（`set LANGSMITH_TRACING=false`），否则每步都联网上报，会把脚本拖到卡死
-- **服务启动时加载一次资源**：把模型写进全局对象，而不是每个请求里重建（这是服务化最容易犯的错）
+- **服务启动时加载一次资源**：把模型写进全局对象，而不是每个请求里重建（服务化最容易犯的错）
+- **本机 DLL 会被应用控制策略拦截**：先是 faiss，后是 mmh3（`DLL load failed: 应用程序控制策略已阻止此文件`）。
+  faiss 做了 numpy 降级；mmh3 在 `env_compat.py` 里给了**纯 Python 的 murmur3 实现**兜底
+  —— 它算出来的值和 C 版逐位一致（文件内有官方测试向量自检），不是凑数返回 0
 
 ---
 
 ## 技术栈
 
 LangGraph 1.2.11 · langchain-core 1.6.3 · DeepSeek（`deepseek-chat`）·
-bge-small-zh-v1.5（512 维中文 embedding）· FastAPI · uvicorn · numpy
+bge-small-zh-v1.5（512 维中文 embedding）· FastAPI · uvicorn · jieba · rank-bm25 · numpy
 
-检索是**向量检索 + 可选 BM25 混合 + RRF 融合 + 大模型 rerank**。
+检索是**向量检索 + BM25 混合 + RRF 融合 + 大模型精排**。
+
+> **为什么用 RRF 融合而不是把两路分数相加**：向量分在 0~1 之间，BM25 分能到十几，
+> 直接相加 BM25 会把向量完全淹没。不同量纲的分数不能相加 —— 这是混合检索最常见的坑。
+> RRF 只看名次（`1/(60+名次)`），天然免疫量纲问题。
 
 ---
 
@@ -123,14 +161,17 @@ bge-small-zh-v1.5（512 维中文 embedding）· FastAPI · uvicorn · numpy
 
 ```
 rag-customer-service/
-├── step1_real_llm_graph.py      # 接真模型
-├── step2_two_tools_choice.py    # 工具选择
-├── step3_real_tools.py          # 真读文件（带参数校验）
-├── step4_rag_demo.py            # 切块 / 向量 / 混合检索
-├── rag_concepts_demo.py         # RAG 概念演示
-├── step5_ingest_guard_demo.py   # 入库五道关卡
-├── step6_fastapi_service.py     # HTTP 服务 + 聊天网页
-├── step6_guard_check.py         # 把关逻辑自检
-├── step3_docs/ step4_docs/      # 示例知识库（含脏数据）
-└── requirements.txt
+├── service.py                   # HTTP 服务 + 聊天网页（主交付物）
+├── env_compat.py                # 环境兼容层（mmh3 的纯 Python 兜底）
+├── requirements.txt
+├── experiments/                 # 每一步的长成过程（教学脚本，可独立运行）
+│   ├── step1_real_llm_graph.py
+│   ├── step2_two_tools_choice.py
+│   ├── step3_real_tools.py
+│   ├── step4_rag_demo.py
+│   ├── rag_concepts_demo.py
+│   ├── step5_ingest_guard_demo.py
+│   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
+└── tests/
+    └── test_guard.py            # 入库把关自检（6 条断言）
 ```
