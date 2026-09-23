@@ -115,24 +115,37 @@ VEC_REJECT_THRESHOLD = 0.55
 | `experiments/rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
 | `experiments/step5_ingest_guard_demo.py` | **入库前把关** | 垃圾进 = 幻觉出，必须在入口拦 |
 | `service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
-| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 16 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
+| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 19 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
 | `kb/loader.py` + `docs/` | 知识库改成**从文件读**（kb/inbox 分目录） | 从"手敲 10 条常量"到"扔 md 就入库"；loader 可脱离模型独立单测 |
 | `evalset/` | 20 题评测集（14 应答题 + 6 拒答题） | 拿到 Recall@5 / 漏答率 / 拒答准确率三个数字，"可度量"才成立 |
 | `env_compat.py` | 绕开本机 DLL 被策略拦截的坑 | 见下方"踩过的坑" |
 
 ---
 
-## 入库把关：五道关卡（实测结果）
+## 入库把关：五道关卡 + 版本冲突（实测结果）
 
 10 条原始材料 → **放行 7 条，拦下 3 条**：
 
 | 关卡 | 拦什么 | 本项目实测拦下 |
 |---|---|---|
-| 太短碎屑 | 少于 15 字的残片 | — |
-| 完全重复 | 归一化后 md5 相同 | — |
-| 近似重复 | 余弦相似度 > 0.90 | 客服话术库的同义改写版 |
-| 个人隐私 | 手机号 / 身份证 / 银行卡 | 含手机号+身份证的工单导出 |
+| ① 太短碎屑 | 少于 15 字的残片 | —（语料里没有，靠自造数据测） |
+| ② 完全重复 | 归一化后 md5 相同 | —（语料里没有，靠自造数据测） |
+| ③ 近似重复 | 余弦相似度 > 0.90 | 客服话术库的同义改写版 |
+| ④ 个人隐私 | 手机号 / 身份证 / 银行卡 | 含手机号+身份证的工单导出 |
+| ⑤ 缺少来源/日期 | `source` / `version` 为空 → 出事无法追溯 | —（语料里没有，靠自造数据测） |
 | 版本冲突 | 同一条款有新旧两版 | 2024 版"扣 30% 手续费"被 2026 版取代 |
+
+> **⑤ 是 2026-09-23 才补上的 —— 补的理由值得记一笔**：在此之前 `_guard()` 只有前 4 关 + 版本冲突，
+> docstring 却一直写着"五道关卡"，即**文档说五关、实现只有四关**：读者以为有兜底，其实没有。
+> 补它不是"和教学演示对齐" —— 知识库改成从 `docs/` 目录读之后（`kb/loader.py`），
+> 入库入口被主动拓宽了，此时"能追溯来源"必须由把关自己保证，不能指望 loader 或人工。
+>
+> ⚠️ **别高估 ⑤**：它只保证 `source` / `version` 字段**非空**，不保证来源**可信** ——
+> 自己填个 `source=官网帮助中心` 照样能过。所以 `docs/inbox/` 仍是「人工审核区」，审完才移进 `docs/kb/`。
+>
+> ★ **① ② ⑤ 这三关在这 10 条语料上从不触发**。也就是说：删掉它们，最终 7/3 的数字不变、
+> 所有断言照样全绿 —— 等于没测。所以每一关都额外配了一条"自己造数据"的测试
+> （`test_short_text_rejected` / `test_exact_duplicate_rejected` / `test_missing_source_rejected`）。
 
 > **修过一个真 bug**：版本冲突关一开始只按「文档名」分组，
 > 结果 `退款政策.md` 里【已发货】和【未发货】两条完全不同的规定被当成"同一条的新旧版"，
@@ -151,13 +164,22 @@ VEC_REJECT_THRESHOLD = 0.55
 # ① 把 DUP_THRESHOLD 从 0.90 改成 0.99（近似重复关形同虚设）
 python -m pytest tests/ -q
 # → FAILED tests/test_guard.py::test_rejected_duplicate - assert False
-# → 1 failed, 12 passed
+# → FAILED tests/test_guard.py::test_near_dup_after_earlier_rejection
+# → 2 failed, 31 passed
 
 # ② 把 VEC_REJECT_THRESHOLD 从 0.55 改成 0.95（该答的也被拒）
 python -m pytest tests/ -q
-# → AssertionError: 「已发货的订单退款要扣多少钱？」库里有，
-#                   却因向量分 0.8033 低于阈值 0.95 被误拒
-# → 2 failed, 11 passed
+# → FAILED tests/test_eval_set.py::test_no_answerable_missed   ← 评测集门禁也响了
+# → FAILED tests/test_guard.py::test_hit_returns_sources
+# → FAILED tests/test_guard.py::test_vec_threshold_separates_hit_and_miss
+# → 3 failed, 30 passed
+
+# ③ 把关卡5（缺少来源/日期）整段改成直通
+python -m pytest tests/ -q
+# → FAILED tests/test_guard.py::test_missing_source_rejected
+# → FAILED tests/test_guard.py::test_guard_survives_missing_keys
+# → 2 failed, 31 passed
+#   ★ 恰好且只有这两条红 —— 说明守它的确实是这两条，没有别的测试在替它兜底
 ```
 
 改坏了立刻变红，而且报错自带**具体数字**——这才是"回归断言"四个字的含义。
@@ -240,6 +262,8 @@ rag-customer-service/
 ├── service.py                   # HTTP 服务 + 聊天网页（主交付物）
 ├── env_compat.py                # 环境兼容层（mmh3 的纯 Python 兜底）
 ├── requirements.txt
+├── .github/
+│   └── workflows/ci.yml         # CI：快 job（纯解析，秒级）+ 慢 job（装模型 + 质量门）
 ├── kb/
 │   └── loader.py                # 知识库加载器：扫 docs/ 树 → 解析元信息 → 切条款
 ├── docs/                        # 知识库（服务真正读的目录）
@@ -257,9 +281,9 @@ rag-customer-service/
 │   ├── rag_concepts_demo.py
 │   ├── step5_ingest_guard_demo.py
 │   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
-└── tests/
-    ├── test_guard.py            # 入库把关 + 拒答短路的回归测试（16 条 pytest 断言）
-    ├── test_loader.py           # kb/loader 解析单测（9 条，不碰模型）
+└── tests/                       # 共 33 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
+    ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（19 条）
+    ├── test_loader.py           # kb/loader 解析单测（9 条，不碰模型 → CI 快 job 跑它）
     └── test_eval_set.py         # 评测集自洽 + 离线质量门禁（5 条）
 ```
 
@@ -290,6 +314,38 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 
 ---
 
+---
+
+## CI：每次 push 自动跑，把"漏答 0"变成质量门
+
+`.github/workflows/ci.yml` —— 有意拆成两个 job：
+
+| job | 装什么 | 跑什么 | 实测耗时 |
+|---|---|---|---|
+| **fast** | 只装 `pytest` | `tests/test_loader.py`（9 条） | **0.03 秒** |
+| **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py`（24 条） | 15 秒起（首次还要下模型） |
+
+**为什么拆**：两类测试成本差约 500 倍（实测 0.03s vs 15s）。合成一个 job 的话，改一行加载器也要等模型下载完才知道对不对。
+
+**fast job 为什么敢只装 pytest**：`kb/loader.py` 只 import `re` 和 `pathlib`。这不是"我觉得"，是验过的 —— 拿一个**没装 fastembed / onnxruntime / jieba** 的解释器去 import 它，连带加载的第三方模块为**零**；再用只装了 pytest 的隔离环境跑，9 条全绿。对照实验：同一个"穷"解释器跑 `test_guard.py` 会直接 `ModuleNotFoundError: No module named 'dotenv'` —— 反过来证明慢 job 确实必须装全套。
+
+**两个真坑**：
+- `HF_ENDPOINT` 必须覆盖成 `https://huggingface.co`：`service.py` 用 `os.environ.setdefault` 把默认值设成国内镜像 `hf-mirror.com`，而 GitHub 的 runner 在海外，走国内镜像大概率慢或超时。正因为源码用的是 `setdefault`，设个环境变量即可覆盖 —— **零改代码**。
+- `python-version: "3.14"` 的**引号不能省**：不加引号 YAML 会把它当浮点数，变成 `3.1`。（已用 PyYAML 校验过类型确实是字符串。）
+
+**刻意不配 `DEEPSEEK_API_KEY`**：`test_guard.py` 用 `monkeypatch` 注入假模型，一条都不调真生成模型。所以 CI 里没有任何密钥 —— 也就没有"密钥泄漏进 CI 日志"这条风险。
+
+**顺带的收益**：慢 job 的 `pip install -r requirements.txt` 就是 Dockerfile 里 pip 层的**预演**（同为 Linux + Python 3.14）。它红 = Docker 也会红，而在 CI 里改（2 分钟）远比在容器里调（半天）便宜。
+
+> 顺带纠正一个我们先前**双方都当真**的错误结论：一度以为"numpy / onnxruntime 在 Linux + py3.14 没有 wheel"。
+> 实测是**假的**，那是被 `pip install --platform ... --abi cp314` 的**字面匹配**骗的 ——
+> `--abi cp314` 会**替换**掉默认 ABI 列表，从而把 `abi3` 轮子排除在外。
+> 直接读 PyPI 上真实的 wheel 文件名才对：mmh3 5.3.0 / numpy 2.5.3 / onnxruntime 1.30.0 / pydantic-core 2.49.0
+> 都有 cp314 的 manylinux 轮子；tokenizers 0.23.2 没有 cp314 专用轮子，但有 `cp310-abi3`（稳定 ABI，3.14 也能装）。
+> **教训**：`--platform` / `--abi` 是"清单替换"而不是"追加"，拿它做兼容性探测会造出假阴性。
+
+---
+
 ## 还没做的（以及为什么现在不做）
 
 主动写出来，比被面试官挖出来强。
@@ -297,15 +353,17 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 | 缺口 | 现状 | 为什么现在不做 |
 |---|---|---|
 | **没部署** | 只能本地跑 | 免费平台要塞 `DEEPSEEK_API_KEY`，**别人点开就能刷你的 key**；平台一 sleep 就 502，比没链接更糟。替代方案：录 60-90 秒 GIF 放 README |
-| **没有 CI** | 测试要手动跑 | 现在 `pytest` 30 条 + 评测门禁都已就绪，接 GitHub Actions 就能把"漏答 0"变成质量门（排在评测集之后做：先有数字，绿才有意义） |
-| **网页用 innerHTML 拼接** | 知识库文本经 `innerHTML` 渲染 | 真实 XSS 隐患，10 行改 `textContent`；下一轮修 |
-| **没有 Dockerfile / 结构化日志** | 全 `print`，无日志 | 基建的价值取决于先有东西可度量；排在评测集与 CI 之后 |
+| **没有 Dockerfile** | 只能本地跑 | 顺序是有意的：先让 CI 慢 job 把「Linux + py3.14 装依赖」跑通，Dockerfile 就只剩打包这一件事 |
+| **没有结构化日志** | 全 `print`，无日志 | 几十处 `print` 要改，是覆盖整个 `service.py` 的重构 —— 所以必须**先有 CI**：绿着改，红了立刻知道是哪次 push 改坏的 |
 | **语料是虚构的** | 10 条自己写的电商条款 | 换真实语料会让"0.90 是实测的"更难解释。**可控的假数据 > 不可控的真数据**，这个项目要证明的是机制，不是数据 |
 
 ### 下一步的顺序
 
 1. ~~服务改成读 `docs/*.md` 再切块~~ ✅ 已完成（`kb/loader.py` + `docs/`）
 2. ~~20 题小评测集（含**漏答率**）~~ ✅ 已完成（`evalset/`，离线层 Recall@5 14/14、漏答 0/14）
-3. 网页 XSS 修复（`innerHTML` → `textContent`）—— 15 分钟，真实漏洞
-4. GitHub Actions CI —— 把 `pytest`（含评测门禁）接成 push 自动跑
-5. 录一段 GIF 放 README 顶部 —— 30 分钟，零风险，效果接近一个在线链接
+3. ~~网页 XSS 修复（`innerHTML` → `textContent`）~~ ✅ 已完成（commit `add5b3e`）
+4. ~~GitHub Actions CI~~ ✅ 已完成（`.github/workflows/ci.yml`，快慢双 job）
+5. ~~补上缺失的关卡5「缺少来源/日期」~~ ✅ 已完成（顺手修的，见上面「入库把关」）
+6. **结构化日志** —— 几十处 `print` 换成 `logging`，靠 CI 兜住这次重构
+7. **Dockerfile** —— 92MB 模型的镜像怎么瘦身（CI 慢 job 已预先验证 Linux + py3.14 装得上）
+8. 录一段 GIF 放 README 顶部 —— 30 分钟，零风险，效果接近一个在线链接
