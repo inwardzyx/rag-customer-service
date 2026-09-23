@@ -428,25 +428,43 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="box" id="ans" style="display:none"></div>
 <div id="src"></div>
 <script>
+// ★ 不用 innerHTML 拼字符串：资料来源、理由都来自知识库文本，
+//   一旦知识库的 .md 里混进 <img onerror=...> 之类，innerHTML 会把它当标签执行（XSS）。
+//   全部改用 textContent / createTextNode —— 内容永远被当【纯文本】，不解析成标签。
+function tag(t){const e=document.createElement('span');e.className='tag';e.textContent=t;return e;}
 async function ask(){
   const q=document.getElementById('q').value.trim();
   if(!q){alert('请输入问题');return;}
   const rr=document.getElementById('rr').checked;
   const a=document.getElementById('ans'),s=document.getElementById('src');
-  a.style.display='block';a.textContent='思考中…';s.innerHTML='';
+  a.style.display='block';a.textContent='思考中…';s.replaceChildren();
   const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({question:q,use_rerank:rr})});
   const d=await r.json();
   a.textContent=d.answer;
   if(d.knowledge_hit===false){
-    s.innerHTML='<p style="font-size:13px;color:#b45f04;margin-top:12px">未命中知识库 · 已拒绝作答（一条资料都没喂给模型）</p>';
+    const p=document.createElement('p');
+    p.style.cssText='font-size:13px;color:#b45f04;margin-top:12px';
+    p.textContent='未命中知识库 · 已拒绝作答（一条资料都没喂给模型）';
+    s.replaceChildren(p);
     return;
   }
-  s.innerHTML='<p style="font-size:13px;color:#888;margin-top:12px">用时 '+d.took_ms+' ms　引用资料：</p>'+
-    (d.sources||[]).map(x=>'<div class="src"><span class="tag">'+x.doc+'</span>'+
-      (x.rerank_score!=null?'<span class="tag">精排 '+x.rerank_score+' 分</span>':'')+
-      (x.rerank_score==null && x.score!=null?'<span class="tag">向量分 '+x.score+'</span>':'')+
-      x.text+(x.reason?'<br><i style="color:#999">'+x.reason+'</i>':'')+'</div>').join('');
+  const head=document.createElement('p');
+  head.style.cssText='font-size:13px;color:#888;margin-top:12px';
+  head.textContent='用时 '+d.took_ms+' ms　引用资料：';
+  s.replaceChildren(head);
+  (d.sources||[]).forEach(x=>{
+    const div=document.createElement('div');div.className='src';
+    div.appendChild(tag(x.doc));
+    if(x.rerank_score!=null)div.appendChild(tag('精排 '+x.rerank_score+' 分'));
+    if(x.rerank_score==null && x.score!=null)div.appendChild(tag('向量分 '+x.score));
+    div.appendChild(document.createTextNode(x.text));
+    if(x.reason){
+      const i=document.createElement('i');i.style.color='#999';i.textContent=x.reason;
+      div.appendChild(document.createElement('br'));div.appendChild(i);
+    }
+    s.appendChild(div);
+  });
 }
 </script></body></html>"""
 

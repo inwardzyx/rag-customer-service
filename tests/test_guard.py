@@ -282,3 +282,17 @@ def test_guard_report_masks_pii(rag):
     for item in rep["rejected"]:
         assert "13812345678" not in item["text"], f"手机号明文泄露：{item['text']}"
         assert "440301199001011234" not in item["text"], f"身份证明文泄露：{item['text']}"
+
+
+# ==================================================================
+# ⑥ 网页渲染不得用 innerHTML（XSS 回归）
+# ==================================================================
+def test_web_page_has_no_innerhtml():
+    """★ 补 XSS 盲区：知识库改成从文件读之后，.md 文本会经 sources 进网页。
+    若用 innerHTML 拼接，文档里混进 `<img onerror=...>` 就会被当标签执行。
+    必须走 textContent / createTextNode（纯文本，不解析标签）。
+
+    注意：只禁【属性访问】`.innerHTML` —— 代码注释里提到 "innerHTML" 不算违规。
+    """
+    assert ".innerHTML" not in svc.HTML_PAGE, "HTML_PAGE 又用回 innerHTML 了（XSS 风险）"
+    assert "textContent" in svc.HTML_PAGE, "渲染应走 textContent 纯文本路径"
