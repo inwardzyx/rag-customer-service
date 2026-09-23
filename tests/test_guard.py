@@ -130,6 +130,46 @@ def test_rejected_duplicate(rag):
     assert any("重复" in reason for _, reason in rag.rejected)
 
 
+def test_near_dup_after_earlier_rejection(rag):
+    """★ 回归：前面有块被拦掉时，后面的近似重复【仍然要被拦住】
+
+    这条专门盯 stage3 的下标写法。
+    如果写成 `for j in range(len(stage3))`，j 遍历的是【位置】而不是【已通过块的下标】：
+    一旦前面拦掉过东西，后面的比对对象就全错位 ——
+    拿新块去比【已被拦掉的】，却漏掉【真正该比的已通过块】。
+
+    为什么上面那条 test_rejected_duplicate 抓不到？
+    它只断言"有东西因重复被拦了"。而本项目那条约会话术库恰好排在最后一个被检查，
+    前面没有块被拦过，错位根本没被触发。所以必须自己造数据，把错位造出来。
+    """
+    docs = [
+        dict(doc="t.md", clause="A", version="2026-01-01", source="测试",
+             text="现货商品在付款后 48 小时内发出，预售商品的发货时间以商品页面标注为准。"),
+        dict(doc="t.md", clause="A2", version="2026-01-01", source="测试",
+             text="现货商品付款后 48 小时内发货，预售商品以商品页面标注的发货时间为准。"),
+        dict(doc="t.md", clause="C", version="2026-01-01", source="测试",
+             text="普通会员累计消费满 1000 元自动升级为 VIP 会员，等级次日生效。"),
+        dict(doc="t.md", clause="C2", version="2026-01-01", source="测试",
+             text="普通会员消费累计满 1000 元即可自动升级为 VIP 会员，等级在次日生效。"),
+    ]
+    kept, rejected = rag._guard(docs)
+    kept_clauses = {c["clause"] for c in kept}
+    reasons = {c["clause"]: r for c, r in rejected}
+
+    # 前提检查：得先确认"错位"真的被造出来了 —— A2 被近似重复挡住
+    assert "A2" not in kept_clauses, (
+        f"测试前提不成立：A2 没被判为与 A 近似重复。实际保留 {sorted(kept_clauses)}，"
+        f"原因 {reasons}。（多半是这两句改写得不够像、相似度掉到 0.90 以下了 —— "
+        "改测试文本，不要改断言）")
+    assert "近似重复" in reasons.get("A2", ""), (
+        f"A2 是被别的关卡拦的，不是近似重复关：{reasons.get('A2')}")
+
+    # ★ 被盯住的那件事：前面拦掉 A2 之后，C2 依然要被拦住
+    assert "C2" not in kept_clauses, (
+        "近似重复检测漏拦了！A2 被拦后 stage3 下标错位，"
+        f"C2 没能和 C 比对。实际保留 {sorted(kept_clauses)}")
+
+
 # ==================================================================
 # ④ 拒答短路：这是整个项目最该被守住的承诺
 # ==================================================================

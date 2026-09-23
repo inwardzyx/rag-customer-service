@@ -167,7 +167,12 @@ class RAG:
         vecs = np.array(list(self.model.passage_embed([c["text"] for c in kept])), dtype="float32")
         stage3 = []
         for i, c in enumerate(kept):
-            dup = any(float(vecs[i] @ vecs[j]) > DUP_THRESHOLD for j in range(len(stage3)))
+            # ★ stage3 里存的是【下标】，所以要比对的直接就是 vecs[j]。
+            #   不能写成 range(len(stage3)) —— 那样 j 变成"第几个通过的"，
+            #   一旦前面拦掉过东西，两套编号就错位了：
+            #   新块会去比【已被拦掉的】，却漏掉【真正该比的已通过块】，于是漏拦。
+            #   tests/test_guard.py::test_near_dup_after_earlier_rejection 守住这里。
+            dup = any(float(vecs[i] @ vecs[j]) > DUP_THRESHOLD for j in stage3)
             if dup:
                 rejected.append((c, "近似重复"))
             else:
