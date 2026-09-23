@@ -110,6 +110,14 @@ def norm(text):
     return re.sub(r"[\s\W_]+", "", text)
 
 
+def _mask_pii(text):
+    """把关拦下的资料若含隐私，返回前脱敏 —— 否则 /guard-report 会把真实手机号/身份证原样吐出去。"""
+    t = text
+    for pat, name in PII_PATTERNS:
+        t = re.sub(pat, f"【{name}已隐匿】", t)
+    return t
+
+
 # ==================================================================
 # ② 全局资源：模型和库只在【服务启动时】加载一次
 #    ★ 这是服务化最重要的一条：绝不能在每个请求里重新加载模型！
@@ -380,7 +388,11 @@ def chat(req: ChatRequest):
         #    之前的写法是"没有分数可判断，只能照常生成" —— 那等于网页上取消勾选一下，
         #    整个拒答机制就被绕过去了，而且 knowledge_hit 还是 true（调用方以为命中了）。
         #    精排分不存在，就用向量分（0~1 的余弦相似度），阈值见 VEC_REJECT_THRESHOLD 的注释。
-        if not cands or cands[0][1] < VEC_REJECT_THRESHOLD:
+        # ★ 用【全部候选里最高的向量分】判断拒答，而不是 RRF 融合后的第一名。
+        #   RRF 可能把 BM25 命中的块顶到第一，而它向量分未必最高 ——
+        #   用第一名会"把高向量分块挤到第二 → 误拒该答的问题"。用 max 更稳。
+        max_vec = max((s for _, s in cands), default=0.0)
+        if not cands or max_vec < VEC_REJECT_THRESHOLD:
             return ChatResponse(
                 answer="知识库里没有能回答这个问题的资料，我不编。",
                 sources=[], took_ms=took(), rerank_used=False, knowledge_hit=False)
@@ -437,6 +449,7 @@ async function ask(){
   s.innerHTML='<p style="font-size:13px;color:#888;margin-top:12px">用时 '+d.took_ms+' ms　引用资料：</p>'+
     (d.sources||[]).map(x=>'<div class="src"><span class="tag">'+x.doc+'</span>'+
       (x.rerank_score!=null?'<span class="tag">精排 '+x.rerank_score+' 分</span>':'')+
+      (x.rerank_score==null && x.score!=null?'<span class="tag">向量分 '+x.score+'</span>':'')+
       x.text+(x.reason?'<br><i style="color:#999">'+x.reason+'</i>':'')+'</div>').join('');
 }
 </script></body></html>"""
