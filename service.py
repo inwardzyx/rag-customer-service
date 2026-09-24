@@ -26,6 +26,7 @@ Step 6：把 RAG 整条链包成 HTTP 服务（FastAPI）
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -67,6 +68,8 @@ from langchain_core.messages import HumanMessage    # noqa: E402
 from langchain_deepseek import ChatDeepSeek         # noqa: E402
 from pydantic import BaseModel, Field               # noqa: E402
 from rank_bm25 import BM25Okapi                     # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 # ==================================================================
 # ① 知识库 + 入库把关
@@ -143,11 +146,11 @@ class RAG:
         #   而不是反过来把干净条款挤掉。loader 不碰模型，可独立单测。
         raw_docs, load_errors = load_documents(DOCS_DIR)
         if load_errors:
-            print(f"⚠ 有 {len(load_errors)} 个文件解析失败（缺元信息/编码错），已跳过：")
+            logger.warning(f"有 {len(load_errors)} 个文件解析失败（缺元信息/编码错），已跳过：")
             for e in load_errors:
-                print(f"   - {e}")
+                logger.warning(f"   - {e}")
         if not raw_docs:
-            print("⚠ 没有从 docs/ 加载到任何文档！检查 DOCS_DIR 路径与文件元信息。")
+            logger.warning("没有从 docs/ 加载到任何文档！检查 DOCS_DIR 路径与文件元信息。")
 
         kept, rejected = self._guard(raw_docs)
         self.chunks = kept
@@ -326,12 +329,12 @@ rag = RAG()
 # @ 开头的叫【装饰器】，它把下面那个函数"包装"一下交给框架 —— 你不用手动调用它。
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("服务启动中：加载模型 + 建库（只在启动时做一次）……")
+    logger.info("服务启动中：加载模型 + 建库（只在启动时做一次）……")
     rag.startup()
-    print(f"✓ 就绪：{len(rag.chunks)} 块入库，拦下 {len(rag.rejected)} 块，"
-          f"耗时 {rag.boot_time:.1f} 秒")
+    logger.info(f"就绪：{len(rag.chunks)} 块入库，拦下 {len(rag.rejected)} 块，"
+                f"耗时 {rag.boot_time:.1f} 秒")
     yield                       # ← 这一行表示"服务开始接客"
-    print("服务关闭")
+    logger.info("服务关闭")
 
 
 app = FastAPI(title="客服知识库问答", lifespan=lifespan)
@@ -508,11 +511,13 @@ def index():
 # ⑤ 启动（只有 python xxx.py 直接运行时才会执行；被 import 时不会）
 # ==================================================================
 if __name__ == "__main__":
-    print("=" * 60)
-    print("服务启动后访问：")
-    print("   http://127.0.0.1:8000        聊天页面")
-    print("   http://127.0.0.1:8000/docs   自动生成的接口文档")
-    print("   http://127.0.0.1:8000/health 健康检查")
-    print("按 Ctrl+C 停止")
-    print("=" * 60)
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logger.info("=" * 60)
+    logger.info("服务启动后访问：")
+    logger.info("   http://127.0.0.1:8000        聊天页面")
+    logger.info("   http://127.0.0.1:8000/docs   自动生成的接口文档")
+    logger.info("   http://127.0.0.1:8000/health 健康检查")
+    logger.info("按 Ctrl+C 停止")
+    logger.info("=" * 60)
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")

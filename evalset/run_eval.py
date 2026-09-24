@@ -21,6 +21,7 @@
     python evalset/run_eval.py --report
 """
 import argparse
+import logging
 import json
 import os
 import sys
@@ -32,6 +33,8 @@ QUESTIONS = REPO_ROOT / "evalset" / "questions.json"
 sys.path.insert(0, str(REPO_ROOT))
 
 import service as svc                                  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def load_questions():
@@ -67,9 +70,9 @@ def main():
     os.environ.setdefault("LANGSMITH_TRACING", "false")
 
     qs = load_questions()
-    print("加载模型 + 建库……")
+    logger.info("加载模型 + 建库……")
     svc.rag.startup()
-    print(f"入库 {len(svc.rag.chunks)} 块，拦下 {len(svc.rag.rejected)} 块\n")
+    logger.info(f"入库 {len(svc.rag.chunks)} 块，拦下 {len(svc.rag.rejected)} 块")
 
     answerable = [q for q in qs if q["type"] == "answer"]
     refuse = [q for q in qs if q["type"] == "refuse"]
@@ -125,14 +128,16 @@ def main():
         lines.append(f"- {qid}: {'拒答' if not hit else '误答'} [{flag}]  {qt}")
     report = "\n".join(lines)
 
-    print(report)
+    logger.info(report)
     if args.report:
         out = REPO_ROOT / "evalset" / "report.md"
         out.write_text(report, encoding="utf-8")
-        print(f"\n已写入 {out}")
+        logger.info(f"已写入 {out}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     t0 = time.time()
     main()
-    print(f"\n耗时 {time.time() - t0:.1f}s")
+    logger.info(f"耗时 {time.time() - t0:.1f}s")

@@ -354,7 +354,6 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 |---|---|---|
 | **没部署** | 只能本地跑 | 免费平台要塞 `DEEPSEEK_API_KEY`，**别人点开就能刷你的 key**；平台一 sleep 就 502，比没链接更糟。替代方案：录 60-90 秒 GIF 放 README |
 | **没有 Dockerfile** | 只能本地跑 | 顺序是有意的：先让 CI 慢 job 把「Linux + py3.14 装依赖」跑通，Dockerfile 就只剩打包这一件事 |
-| **没有结构化日志** | 全 `print`，无日志 | 几十处 `print` 要改，是覆盖整个 `service.py` 的重构 —— 所以必须**先有 CI**：绿着改，红了立刻知道是哪次 push 改坏的 |
 | **语料是虚构的** | 10 条自己写的电商条款 | 换真实语料会让"0.90 是实测的"更难解释。**可控的假数据 > 不可控的真数据**，这个项目要证明的是机制，不是数据 |
 
 ### 下一步的顺序
@@ -364,6 +363,6 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 3. ~~网页 XSS 修复（`innerHTML` → `textContent`）~~ ✅ 已完成（commit `add5b3e`）
 4. ~~GitHub Actions CI~~ ✅ 已完成（`.github/workflows/ci.yml`，快慢双 job）
 5. ~~补上缺失的关卡5「缺少来源/日期」~~ ✅ 已完成（顺手修的，见上面「入库把关」）
-6. **结构化日志** —— 几十处 `print` 换成 `logging`，靠 CI 兜住这次重构
+6. ~~结构化日志~~ ✅ 已完成（`service.py` / `env_compat.py` / `evalset/run_eval.py` 运行时 `print` 换成 `logging`，入口处 `basicConfig` 保住输出；`experiments/` 教学脚本保留 `print` —— 那里逐行打印是刻意的）
 7. **Dockerfile** —— 92MB 模型的镜像怎么瘦身（CI 慢 job 已预先验证 Linux + py3.14 装得上）
 8. 录一段 GIF 放 README 顶部 —— 30 分钟，零风险，效果接近一个在线链接

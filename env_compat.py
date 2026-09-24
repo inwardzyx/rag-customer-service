@@ -23,8 +23,11 @@
     env_compat.ensure_mmh3()
 """
 
+import logging
 import sys
 import types
+
+logger = logging.getLogger(__name__)
 
 
 def _murmur3_x86_32(data: bytes, seed: int = 0) -> int:
@@ -120,13 +123,15 @@ def _self_test():
     """
     cases = [("hello", 613153351), ("foo", -156908512)]
     ok = all(_murmur3_x86_32(s.encode()) == expect for s, expect in cases)
-    print("murmur3 自检：", "通过 ✓" if ok else "不通过 ✗（实现有误，别用）")
+    logger.info("murmur3 自检：%s", "通过 ✓" if ok else "不通过 ✗（实现有误，别用）")
     for s, expect in cases:
         got = _murmur3_x86_32(s.encode())
-        print(f"  hash({s!r}) = {got}  期望 {expect}  {'✓' if got == expect else '✗'}")
+        logger.info(f"  hash({s!r}) = {got}  期望 {expect}  {'✓' if got == expect else '✗'}")
     return ok
 
 
 if __name__ == "__main__":
-    print("mmh3 状态：", ensure_mmh3())
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logger.info("mmh3 状态：%s", ensure_mmh3())
     _self_test()
