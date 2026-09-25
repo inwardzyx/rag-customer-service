@@ -83,51 +83,90 @@ def clauses(rag):
 # ① 总数：少一条、多一条都要报警
 #    ★ 没有这一条的话，"误伤型"改动（把关太严、把该留的也杀了）会全绿通过
 # ==================================================================
-def test_kept_count_is_7(rag):
-    assert len(rag.chunks) == 7, f"放行了 {len(rag.chunks)} 条，应该是 7 条"
+def test_kept_count_matches_real_corpus(rag):
+    """真实语料（学校公开制度）入库块数。
+
+    ★ 这个数字会随 docs/ 增删而变 —— 这不是缺点，恰恰是
+      "往 docs/ 扔一个 .md 库就变大"这条能力的可执行证据。
+      换语料后要同步改这里，但【只改数字不够】：下面还有盯具体条款的断言，
+      否则"库里少了一半"这种事只要跟着改数字就能骗过去。
+    """
+    assert len(rag.chunks) == 67, f"放行了 {len(rag.chunks)} 条，应该是 67 条"
 
 
-def test_rejected_count_is_3(rag):
-    assert len(rag.rejected) == 3, f"拦下了 {len(rag.rejected)} 条，应该是 3 条"
+def test_rejected_count_is_16(rag):
+    """被拦下的块数：当前全部来自 docs/inbox/ 的网页抓取残留（太短碎屑关）"""
+    assert len(rag.rejected) == 16, f"拦下了 {len(rag.rejected)} 条，应该是 16 条"
 
 
 # ==================================================================
 # ② 该留的必须在：直接盯住那个修过的 bug
 # ==================================================================
-def test_kept_has_shipped_refund(clauses):
-    """已发货退款条款还在"""
-    assert ("退款政策.md", "退款-已发货") in clauses
+def test_kept_has_punishment_kinds(clauses):
+    """处分种类那条还在（真实语料里最常被问的一条：警告/严重警告/记过/留校察看/开除学籍）"""
+    assert ("学生纪律处分管理规定.md", "第二章-第四条") in clauses
 
 
-def test_kept_has_unshipped_refund(clauses):
-    """未发货退款条款还在 ★ 这是以前踩过的坑：
-    版本冲突关一开始只按【文档名】分组，结果同一份 退款政策.md 里的
-    【已发货】和【未发货】被当成"同一条的新旧版"互相挤掉，库里凭空少一条规则。
-    改成按 (文档 + 条款) 分组才修好 —— 这条断言就是守住这个修复。"""
-    assert ("退款政策.md", "退款-未发货") in clauses
+def test_same_doc_different_clauses_all_kept(clauses):
+    """★ 以前踩过的坑，换语料后这条语义仍要守住：
+    版本冲突关一开始只按【文档名】分组，结果同一份文档里的不同条款
+    被当成"同一条的新旧版"互相挤掉，库里凭空少规则。
+    改成按 (文档 + 条款) 分组才修好。
+    真实语料里对应的场景是同一份《纪律处分管理规定》开头连续三条，
+    断言它们必须各自独立保留 —— 少一条就说明分组又退化了。"""
+    for c in ("第一章-第一条", "第一章-第二条", "第一章-第三条"):
+        assert ("学生纪律处分管理规定.md", c) in clauses, f"{c} 被误挤掉了"
 
 
-def test_kept_has_delivery_time(clauses):
-    """发货时效条款还在"""
-    assert ("发货时效.md", "现货发货") in clauses
+def test_kept_has_leave_approval(clauses):
+    """请销假制度的请假审批权限那条还在（1天班主任 / 1周二级学院 / 1周以上三级）"""
+    assert ("学生请销假制度.md", "总则-第三条") in clauses
 
 
 # ==================================================================
 # ③ 该拦的必须被拦：三道关卡各盯一条
 # ==================================================================
 def test_rejected_old_version(rag):
-    """旧版本条款被拦（版本冲突关）"""
-    assert any("旧版本" in reason for _, reason in rag.rejected)
+    """版本冲突关：同 (doc, clause) 出现两个 version 时，旧的那个要被拦下。
+
+    ★ 为什么改成自己造数据：真实语料是学校公开制度，只有单一版本，
+      没有"新旧版冲突"的样本，所以这一关在真实入库里【根本不会触发】。
+      想确认它还在工作，只能构造样本直接喂给 _guard。
+      （同理见下面两条 —— 这是换真实语料后必须诚实说明的事，别假装关卡被验证过。）
+    """
+    docs = [
+        dict(doc="t.md", clause="同一条", version="2026-01-01", source="测试",
+             text="学生请假一天以内由班主任审批，一周以内由二级学院审批，一周以上须三级审批。"),
+        dict(doc="t.md", clause="同一条", version="2024-01-01", source="测试（旧版）",
+             text="宿舍内禁止使用大功率电器，一经发现没收器具并给予通报批评处理。"),
+    ]
+    kept, rejected = rag._guard(docs)
+    assert len(kept) == 1, f"同条款两个版本应只留一个，实际留了 {len(kept)}"
+    assert any("旧版本" in r for _, r in rejected), f"旧版本没被拦：{rejected}"
 
 
 def test_rejected_privacy(rag):
-    """含手机号 / 身份证的那条被拦（个人隐私关）"""
-    assert any("隐私" in reason for _, reason in rag.rejected)
+    """个人隐私关：含手机号 / 身份证的文本要被拦下，不能进库。
+    （真实公开制度里没有 PII，所以同样靠构造样本验证这一关还活着。）"""
+    docs = [dict(doc="t.md", clause="含隐私", version="2026-01-01", source="测试",
+                 text="联系方式：13812345678，身份证号 440301199001011234，请核实后办理。")]
+    kept, rejected = rag._guard(docs)
+    assert kept == [], f"含隐私的文本不该入库：{kept}"
+    assert any("隐私" in r for _, r in rejected), f"隐私关没拦：{rejected}"
 
 
 def test_rejected_duplicate(rag):
-    """话术库的同义改写版被拦（近似重复关）"""
-    assert any("重复" in reason for _, reason in rag.rejected)
+    """近似重复关：措辞微调、语义几乎一样的改写版要被拦下。
+    两句只差几个字，确保余弦相似度稳过 0.90 —— 换真实语料后同样无现成样本。"""
+    docs = [
+        dict(doc="t.md", clause="D1", version="2026-01-01", source="测试",
+             text="学生在校学习期间离校应当由本人办理请假手续，并附有关证明材料。"),
+        dict(doc="t.md", clause="D2", version="2026-01-01", source="测试",
+             text="学生在校学习期间离校应当由本人办理请假手续，并附上有关证明材料。"),
+    ]
+    kept, rejected = rag._guard(docs)
+    assert len(kept) == 1, f"近似重复的两块应只留一条，实际留了 {len(kept)}"
+    assert any("重复" in r for _, r in rejected), f"近似重复没被拦：{rejected}"
 
 
 def test_near_dup_after_earlier_rejection(rag):
@@ -239,7 +278,7 @@ def test_refuse_when_rerank_scores_low(rag, monkeypatch):
     monkeypatch.setattr(rag, "_llm", _FakeLLM(
         '{"scores":[{"id":1,"score":1,"reason":"完全不相关"}]}'))
 
-    resp = svc.chat(svc.ChatRequest(question="支持分期付款吗？", use_rerank=True))
+    resp = svc.chat(svc.ChatRequest(question="图书馆几点关门？", use_rerank=True))
     assert resp.knowledge_hit is False, "精排分低于 5 却不拒答"
     assert resp.sources == [], "拒答时不该返回任何资料"
     assert "我不编" in resp.answer
@@ -251,7 +290,7 @@ def test_refuse_even_rerank_off(rag):
     以前的写法是"关掉 rerank 没分数可判断，只能照常生成" ——
     那等于网页上取消勾选一下，整个拒答机制就没了，而且 knowledge_hit 还是 true。
     这条断言守住：不管开关怎么拨，拒答都得在。"""
-    resp = svc.chat(svc.ChatRequest(question="支持分期付款吗？", use_rerank=False))
+    resp = svc.chat(svc.ChatRequest(question="图书馆几点关门？", use_rerank=False))
     assert resp.knowledge_hit is False, "库里没有却没拒答，防线被绕过了"
     assert resp.sources == [], "拒答时不该返回任何资料"
     assert "我不编" in resp.answer
@@ -261,7 +300,7 @@ def test_hit_returns_sources(rag, monkeypatch):
     """库里有的 → 正常命中并返回出处（同样用人偶模型，不需要 API key）"""
     monkeypatch.setattr(rag, "_llm", _FakeLLM("（假模型返回，未真实调用）"))
 
-    resp = svc.chat(svc.ChatRequest(question="已发货的订单退款要扣多少钱？", use_rerank=False))
+    resp = svc.chat(svc.ChatRequest(question="什么情况会被开除学籍？", use_rerank=False))
     assert resp.knowledge_hit is True, "库里明明有，却被当成没命中"
     assert len(resp.sources) > 0, "命中了却没给出处"
 
@@ -274,21 +313,22 @@ def test_hit_returns_sources(rag, monkeypatch):
 #    换语料之后这条会红 —— 它不是 bug，是提醒你"阈值该重新量了"。
 # ==================================================================
 SHOULD_HIT = [
-    "已发货的订单退款要扣多少钱？",
-    "东西坏了能修吗？",
-    "会员怎么升级成 VIP？",
-    "跨境订单要交税吗？",
-    "物流单号多久能查到？",
-    "现货什么时候发货？",
-    "保修期从什么时候开始算？",
+    "什么情况会被开除学籍？",
+    "处分有哪几种？",
+    "从轻处分的情形有哪些？",
+    "从重处分的情形有哪些？",
+    "请假一天谁批准？",
+    "病假要交什么证明？",
+    "假满不销假会怎样？",
+    "用欺骗手段请假怎么处罚？",
 ]
 
 SHOULD_REFUSE = [
-    "支持分期付款吗？",
-    "你们公司 CEO 是谁？",
+    "图书馆几点关门？",
+    "学费一年多少钱？",
     "今天天气怎么样？",
-    "优惠券怎么用？",
-    "可以用花呗吗？",
+    "食堂几点开饭？",
+    "怎么申请助学贷款？",
 ]
 
 

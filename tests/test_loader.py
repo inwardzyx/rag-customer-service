@@ -48,10 +48,10 @@ def test_parse_frontmatter_no_delimiter_returns_none():
 # ==================================================================
 def test_load_documents_counts():
     docs, errors = load_documents(DOCS_DIR)
-    # 6 个 kb 文件（退款政策.md 含 2 条条款）+ 3 个 inbox 文件 = 10 条原始块。
+    # 真实语料（学校公开制度）：纪律处分 61 块 + 请销假 7 块 + inbox 抓取残留 15 块 = 83 条原始块。
     # 注意：这里返回的是「解析出的全部原始块」，还没过入库把关；
-    # 过完关后才会变成 7 留 3 拦（那条断言在 test_guard.py::test_kept_count_is_7）。
-    assert len(docs) == 10, f"解析出 {len(docs)} 条，应为 10 条"
+    # 过完关后才会变成 67 留 16 拦（那条断言在 test_guard.py::test_kept_count_matches_real_corpus）。
+    assert len(docs) == 83, f"解析出 {len(docs)} 条，应为 83 条"
     assert errors == [], f"不应有解析失败的文件：{errors}"
 
 
@@ -96,10 +96,11 @@ def test_bad_frontmatter_goes_to_errors():
 def test_kb_before_inbox_order():
     # 证明排序真的把 kb 排在了 inbox 前面 —— 这是「脏副本不会挤掉干净条款」的前提。
     docs, _ = load_documents(DOCS_DIR)
-    order = [d["source"] for d in docs]
-    # inbox 的两个脏来源（旧版帮助中心 / 客服话术库）都应该出现在官网帮助中心之后
-    kb_positions = [i for i, s in enumerate(order) if s == "官网帮助中心"]
-    inbox_positions = [i for i, s in enumerate(order)
-                       if s in ("旧版帮助中心（已下线）", "客服话术库")]
-    assert kb_positions and inbox_positions
+    # 用【文档名】而不是 source 文本来区分，source 描述文字改了也不会让这条测试假红
+    order = [d["doc"] for d in docs]
+    INBOX_DOC = "网页抓取残留.md"
+    kb_positions = [i for i, s in enumerate(order) if s != INBOX_DOC]
+    inbox_positions = [i for i, s in enumerate(order) if s == INBOX_DOC]
+    assert kb_positions and inbox_positions, (
+        f"kb / inbox 两侧都得有块才谈得上顺序。实际文档顺序：{order[:5]}...")
     assert max(kb_positions) < min(inbox_positions)

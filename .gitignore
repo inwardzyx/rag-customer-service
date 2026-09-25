@@ -26,3 +26,6 @@ venv/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 语料转换的临时中间产物（源头文件是学院内部文件，绝不进公开仓库）
+.tmp_extract/

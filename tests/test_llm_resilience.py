@@ -97,7 +97,7 @@ def test_rerank_bad_json_raises_not_silent_zero(rag, monkeypatch):
     现在必须抛 LLMCallError，让 /chat 去决定降级还是暴露。
     """
     monkeypatch.setattr(svc.rag, "_llm", _FakeLLM("抱歉，我这次不想输出 JSON"))
-    q = "已发货的订单退款要扣多少钱？"
+    q = "什么情况会被开除学籍？"
     cands = svc.rag.search(q, k=3)
     assert cands, "检索应该命中，否则这条用例没真正测到 rerank"
 
@@ -119,7 +119,7 @@ def test_rerank_skips_hallucinated_id(rag, monkeypatch):
         {"id": 99, "score": 10, "reason": "幻觉出来的 id"},
     ]})
     monkeypatch.setattr(svc.rag, "_llm", _FakeLLM(payload))
-    q = "已发货的订单退款要扣多少钱？"
+    q = "什么情况会被开除学籍？"
     cands = svc.rag.search(q, k=3)
 
     out = svc.rag.rerank(q, cands)
@@ -160,7 +160,7 @@ def test_chat_degrades_instead_of_faking_rejection(rag, monkeypatch):
 
     # 不用 with TestClient(...)：rag 已由 fixture 启动，避免 lifespan 再加载一次模型
     client = TestClient(svc.app)
-    r = client.post("/chat", json={"question": "已发货的订单退款要扣多少钱？",
+    r = client.post("/chat", json={"question": "什么情况会被开除学籍？",
                                    "use_rerank": False})
 
     assert r.status_code == 200, f"期望 200，实际 {r.status_code}：{r.text[:200]}"

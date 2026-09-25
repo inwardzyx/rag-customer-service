@@ -79,7 +79,11 @@ def main():
 
     # 检索层：Recall@5
     recalled = [(q["id"], recall_gold(q)) for q in answerable]
-    recall_count = sum(1 for _, r in recalled)
+    # ★ 这里必须带 if r：写成 sum(1 for _, r in recalled) 会统计【遍历了多少题】
+    #   而不是【多少题命中】，于是 Recall 报告永远等于满分 —— 一个永远说 14/14 的
+    #   报告比没有报告更危险，它让"检索变差"这种事永远不会被发现。
+    #   （这个 bug 是被 tests/test_eval_set.py 交叉验证抓出来的：报告 14/14，测试却在红。）
+    recall_count = sum(1 for _, r in recalled if r)
 
     # 应答层：漏答率（knowledge_hit 是否为 false）
     miss = [(q["id"], knowledge_hit(q, args.with_llm)) for q in answerable]
