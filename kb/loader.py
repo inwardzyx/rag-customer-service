@@ -46,6 +46,15 @@ REQUIRED_META = ("doc", "version", "source")
 CHROME_STRONG = ("粤ICP备", "粤公网安备", "版权所有", "网站管理", "网站维护", "扫码关注")
 CHROME_WEAK = ("上一篇", "下一篇", "欢迎访问", "联系我们", "党政办电话", "招生咨询")
 
+# 「清洗动作」的标识 —— 随 warning 一起写进日志的 extra 字段，
+# 供 scripts/measure_chunk_health.py 按【结构化字段】统计"加载时动了几刀"。
+# ★ 为什么不去解析日志文案：那是"判据和被测对象不同源"，改一个措辞就静默失效
+#   （第二轮刚修过一颗同类的哑弹，见 service.py::_version_key 的注释）。
+#   体检脚本 import 这几个常量 → 两边同源，改名字会一起改。
+CLEAN_OP_FOOTER = "剥离网页页脚"
+CLEAN_OP_TRUNCATE = "截断丢字"
+CLEAN_OP_PREAMBLE = "丢弃 ## 前的正文"
+
 # 只有当页脚尾巴达到一定长度才切，避免正文里偶然出现"联系我们"就被削掉。
 # 30 字是拍的，但很保守：真页脚动辄上百字，而误伤代价是真条文被削。
 MIN_FOOTER_CHARS = 30
@@ -171,7 +180,8 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
         head = sections[0].strip()
         if head:
             logger.warning("「%s」第一个 ## 之前有 %d 字正文，不属于任何条款，已丢弃：%r",
-                           meta["doc"], len(head), head[:30])
+                           meta["doc"], len(head), head[:30],
+                           extra={"clean_op": CLEAN_OP_PREAMBLE, "clean_chars": len(head)})
 
         for sec in sections[1:]:                       # 按「行首 ## 」切成一条条条款
             clause, _, content = sec.partition("\n")
@@ -185,7 +195,8 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             if stripped:
                 # 不静默清洗：剥了多少、哪一条，必须看得见（和下面截断是同一个道理）
                 logger.warning("「%s｜%s」剥离网页页脚 %d 字（剩 %d 字正文）",
-                               meta["doc"], clause.strip(), stripped, len(content))
+                               meta["doc"], clause.strip(), stripped, len(content),
+                               extra={"clean_op": CLEAN_OP_FOOTER, "clean_chars": stripped})
 
             # ★ 超长不再静默截断：丢了多少字要报出来。
             #   为什么现在【不】改成"切成多块"：剥完页脚后全库超长块是 0 个，
@@ -195,7 +206,9 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             if len(content) > max_chars:
                 logger.warning("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）",
                                meta["doc"], clause.strip(), len(content),
-                               max_chars, len(content) - max_chars)
+                               max_chars, len(content) - max_chars,
+                               extra={"clean_op": CLEAN_OP_TRUNCATE,
+                                      "clean_chars": len(content) - max_chars})
                 content = content[:max_chars]
 
             docs.append({

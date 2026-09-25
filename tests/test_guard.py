@@ -568,3 +568,24 @@ def test_real_corpus_gate_coverage_is_documented(rag):
     assert set(counts) == {"太短碎屑"}, (
         f"真实语料的拦截原因变了：{dict(counts)}。"
         f"README 里的关卡覆盖度表需要同步更新。")
+
+
+# ==================================================================
+# 防漂移：体检脚本里"手抄的常量"必须和真值一致
+# ==================================================================
+def test_health_script_min_len_is_not_drifted():
+    """★ 体检脚本手抄的 MIN_LEN 必须等于 service 的真值。
+
+    和 tests/test_loader.py::test_health_script_max_chars_is_not_drifted 是一对，
+    只是真值住在不同的文件里（max_chars 在 kb/loader、MIN_LEN 在 service），
+    所以拆成两条 —— 一条断言住一个真值，漂移时能直接看出是哪个数错了。
+
+    ★ 为什么这条住在 test_guard.py 而不是 test_loader.py：
+      真值 MIN_LEN 在 service.py，而 test_loader.py 刻意不 import service
+      （只是想跑切片逻辑的人不该被拖着 import fastembed、慢几秒）。
+      test_guard.py 本来就 import 了 service，顺手断言最省代价。
+      **别为了"两个测试排在一起好看"就把 service 拖进 test_loader.py。**
+    """
+    import scripts.measure_chunk_health as health
+    assert health.MIN_LEN_HINT == svc.MIN_LEN, (
+        f"体检脚本抄的是 {health.MIN_LEN_HINT}，service 真值是 {svc.MIN_LEN} —— 该去改脚本了")

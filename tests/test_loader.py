@@ -17,7 +17,7 @@ import tempfile
 # （本文件【不】import service —— 那会连带加载 embedding 模型，就不便宜了）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from kb.loader import load_documents, _parse_frontmatter, strip_footer   # noqa: E402
+from kb.loader import _CHROME_RE, _parse_frontmatter, load_documents, strip_footer   # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCS_DIR = os.path.join(REPO_ROOT, "docs")
@@ -275,10 +275,16 @@ def test_real_corpus_has_no_footer_left():
 
     这条盯的是【效果】不是【实现】—— 以后换了剥离规则、或抓了新页面，
     只要库里又混进页脚，这里就红。
+
+    ★ 2026-09-25 改判据（原判据是颗哑弹）：原来用"全串查找"
+      （`any(m in d["text"] for m in (...))`），而 loader 已经收紧成**只认行首**
+      （页脚永远自成一行）。两者方向相反 —— 正文里合法的一句
+      "学生如有疑问请联系我们"在 loader 眼里是对的，在旧判据眼里却算"有残留"：
+      一条会**假红**、还可能诱导出错误修复（去把 loader 改松）的哑弹。
+      现在复用 loader 的 `_CHROME_RE`，判据只留一处。
     """
     docs, _ = load_documents(DOCS_DIR)
-    dirty = [d["clause"] for d in docs
-             if any(m in d["text"] for m in ("上一篇", "下一篇", "粤ICP备", "版权所有", "联系我们"))]
+    dirty = [d["clause"] for d in docs if _CHROME_RE.search(d["text"])]
     assert dirty == [], f"库里还有块带页脚残留：{dirty}"
 
 
@@ -291,3 +297,27 @@ def test_real_corpus_no_block_is_truncated():
     docs, _ = load_documents(DOCS_DIR)
     over = [(d["clause"], len(d["text"])) for d in docs if len(d["text"]) >= 400]
     assert over == [], f"有块被截断了（丢字）：{over}"
+
+
+# ==================================================================
+# ④ 防漂移：体检脚本里"手抄的常量"必须和真值一致
+# ==================================================================
+def test_health_script_max_chars_is_not_drifted():
+    """★ 体检脚本手抄的 MAX_CHARS 必须等于 loader 的真值。
+
+    `scripts/measure_chunk_health.py` 刻意不 import service（那会加载 embedding 模型、
+    要十几秒），所以它把阈值手抄了一份。这个取舍没问题 —— **工具的延迟决定它会不会被跑**：
+    秒级的工具你会随手跑，十几秒的你会攒着一起跑。
+
+    但"手抄的常量悄悄漂移"是真风险：哪天改了 `load_documents` 的默认值，
+    体检却还按老阈值报警 —— 又是一处"看着对、其实查的不是同一件事"。
+
+    修法不是让脚本去 import（那会丢掉秒级这个性质），而是**在这里断言两者相等**：
+    漂移会在 CI 当场变红，而脚本依然零依赖、依然秒级。
+    """
+    import inspect
+
+    import scripts.measure_chunk_health as health
+    real = inspect.signature(load_documents).parameters["max_chars"].default
+    assert health.MAX_CHARS_HINT == real, (
+        f"体检脚本抄的是 {health.MAX_CHARS_HINT}，loader 真值是 {real} —— 该去改脚本了")
