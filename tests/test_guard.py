@@ -18,8 +18,14 @@
     service.py 里的 llm 是懒加载的（用到才建），所以没配 key 也能全绿。
 
 ★ 变异测试（验证这套断言真的有用）：
-    把 service.py 里的 DUP_THRESHOLD 从 0.90 改成 0.99，再跑一次 ——
+    把 service.py 里的 DUP_THRESHOLD 从 0.96 改成 0.99，再跑一次 ——
     应该看到 FAILED。这就是"改坏了会立刻报错"真正的样子。
+
+★ 2026-09-25 实测过的 4 个变异，全部被抓住（没一个是"测试写了但抓不住"）：
+    DUP_THRESHOLD 0.96→0.99  → test_near_dup_after_earlier_rejection 红
+    DUP_THRESHOLD 0.96→0.90  → test_dup_threshold_has_margin 红（误伤第二十五条复现）
+    隐私关 hit 恒为 None      → test_rejected_privacy + 脏数据夹具 红
+    版本冲突永不换新          → 脏数据夹具 红
 """
 
 import os
@@ -91,12 +97,12 @@ def test_kept_count_matches_real_corpus(rag):
       换语料后要同步改这里，但【只改数字不够】：下面还有盯具体条款的断言，
       否则"库里少了一半"这种事只要跟着改数字就能骗过去。
     """
-    assert len(rag.chunks) == 67, f"放行了 {len(rag.chunks)} 条，应该是 67 条"
+    assert len(rag.chunks) == 68, f"放行了 {len(rag.chunks)} 条，应该是 68 条"
 
 
-def test_rejected_count_is_16(rag):
-    """被拦下的块数：当前全部来自 docs/inbox/ 的网页抓取残留（太短碎屑关）"""
-    assert len(rag.rejected) == 16, f"拦下了 {len(rag.rejected)} 条，应该是 16 条"
+def test_rejected_count_is_15(rag):
+    """被拦下的块数：当前全部来自 docs/inbox/ 的网页抓取残留（太短碎屑关 + 近似重复关）"""
+    assert len(rag.rejected) == 15, f"拦下了 {len(rag.rejected)} 条，应该是 15 条"
 
 
 # ==================================================================
@@ -157,7 +163,13 @@ def test_rejected_privacy(rag):
 
 def test_rejected_duplicate(rag):
     """近似重复关：措辞微调、语义几乎一样的改写版要被拦下。
-    两句只差几个字，确保余弦相似度稳过 0.90 —— 换真实语料后同样无现成样本。"""
+
+    ★ 这里 clause 故意写成【不同】（D1 / D2）：判重只看文本像不像，不看条款名。
+      这不是随便定的 —— 2026-09-25 踩过坑：真实语料里那条该拦的完全相同文本
+      （余弦 1.0000）两条 clause 名就是不一样的，一度加过"必须同条款才判重"的
+      条件，结果把它放行了。所以这条同时守住"别再加身份判断回去"。
+      反过来，不同条款但主题相近（余弦 0.9230）不该被拦 —— 见下面那条测试。
+    """
     docs = [
         dict(doc="t.md", clause="D1", version="2026-01-01", source="测试",
              text="学生在校学习期间离校应当由本人办理请假手续，并附有关证明材料。"),
@@ -192,21 +204,50 @@ def test_near_dup_after_earlier_rejection(rag):
              text="普通会员消费累计满 1000 元即可自动升级为 VIP 会员，等级在次日生效。"),
     ]
     kept, rejected = rag._guard(docs)
-    kept_clauses = {c["clause"] for c in kept}
-    reasons = {c["clause"]: r for c, r in rejected}
 
-    # 前提检查：得先确认"错位"真的被造出来了 —— A2 被近似重复挡住
-    assert "A2" not in kept_clauses, (
-        f"测试前提不成立：A2 没被判为与 A 近似重复。实际保留 {sorted(kept_clauses)}，"
-        f"原因 {reasons}。（多半是这两句改写得不够像、相似度掉到 0.90 以下了 —— "
-        "改测试文本，不要改断言）")
-    assert "近似重复" in reasons.get("A2", ""), (
-        f"A2 是被别的关卡拦的，不是近似重复关：{reasons.get('A2')}")
+    # 应只留 A 和 C 各一条，两条改写版都被近似重复关拦掉。
+    assert sorted(c["clause"] for c in kept) == ["A", "C"], (
+        f"4 条里应只留 A 和 C 各一条。实际留了：{[c['clause'] for c in kept]}")
+    assert sum(1 for _, r in rejected if "重复" in r) == 2, (
+        f"应有两条因重复被拦，实际：{[(c['text'][:18], r) for c, r in rejected]}")
 
-    # ★ 被盯住的那件事：前面拦掉 A2 之后，C2 依然要被拦住
-    assert "C2" not in kept_clauses, (
-        "近似重复检测漏拦了！A2 被拦后 stage3 下标错位，"
-        f"C2 没能和 C 比对。实际保留 {sorted(kept_clauses)}")
+
+def test_dup_threshold_has_margin(rag):
+    """★ 守住"阈值不误伤"这件事本身，而不只是守住今天的数字。
+
+    背景：DUP_THRESHOLD 一度是 0.90，真实语料里【第二十四条 vs 第二十五条】
+    余弦 0.9230 > 0.90，于是第二十五条被当成重复删掉 —— 库里凭空少一条规则，
+    而所有"计数"类断言只要跟着改数字就能全绿，根本发现不了。
+
+    所以这里盯的不是"拦了几条"，而是【那条最像的非重复配对，离阈值还有多远】。
+    以后往 docs/ 加文档、把相似度顶上去了，这条会先红，
+    逼你重新量分布（scripts/measure_dup_distribution.py），而不是静默删内容。
+    """
+    from service import DUP_THRESHOLD
+    import numpy as np
+
+    # 原 bug 的主角必须在库里：第二十五条一度被第二十四条挤掉（0.9230 > 旧的 0.90）
+    by = {(c["doc"], c["clause"]) for c in rag.chunks}
+    for c in ("第三章-第二十四条", "第三章-第二十五条"):
+        assert ("学生纪律处分管理规定.md", c) in by, f"{c} 不在库里 —— 被误删了"
+
+    # ★ 扫【全库所有存活块的两两配对】取最大值，而不是只盯 24/25 那一对。
+    #   只盯一对的话，以后往 docs/ 加了新文档、最像的一对换了人，这条看不见。
+    vecs = np.array(list(rag.model.passage_embed([c["text"] for c in rag.chunks])),
+                    dtype="float32")
+    sim = vecs @ vecs.T
+    np.fill_diagonal(sim, -1.0)                       # 自己和自己不算
+    i, j = np.unravel_index(int(np.argmax(sim)), sim.shape)
+    top = float(sim[i, j])
+
+    assert top < DUP_THRESHOLD, (
+        f"库里最像的一对非重复块余弦 {top:.4f} 已经顶到阈值 {DUP_THRESHOLD} 了 "
+        f"（{rag.chunks[i]['clause']} vs {rag.chunks[j]['clause']}），再靠近就要误删条款。"
+        f"去重跑 scripts/measure_dup_distribution.py 重新定阈值。")
+    # 余量也要够：贴着阈值站住说明下次加文档就会翻车。
+    assert DUP_THRESHOLD - top > 0.02, (
+        f"余量只剩 {DUP_THRESHOLD - top:.4f}（{rag.chunks[i]['clause']} vs "
+        f"{rag.chunks[j]['clause']}），太薄，需要重新量分布定阈值。")
 
 
 def test_short_text_rejected(rag):
@@ -333,13 +374,27 @@ SHOULD_REFUSE = [
 
 
 def test_vec_threshold_separates_hit_and_miss(rag):
-    """阈值必须真的能把"该答的"和"该拒的"分开"""
+    """阈值必须真的能把"该答的"和"该拒的"分开。
+
+    ★ 2026-09-25 修过一处"测的是另一个量"的问题（cc 审查发现）：
+        这里原本用 `rag.search(q)[0][1]`，也就是 **RRF 融合后第一名**的向量分；
+        而生产代码（service.py 的 else 分支）用的是 `max(全部候选的向量分)`。
+        两者不是一回事 —— RRF 可能把 BM25 命中的块顶到第一，而它向量分未必最高。
+        实测差得不小（"处分有哪几种？" 0.5715 vs 0.6087），只是这 13 题恰好没翻盘。
+        现在改成和生产一致的 max。
+
+    ★ 题库只放【没有争议的题】：evalset 里的两道 boundary 题
+        （q19「宿舍几点熄灯」、q20「学生证补办」）不在下面两个列表里。
+        q20 向量分 0.6049 > 0.55，纯向量路会放行 —— 这是已知的离线层边界，
+        由 evalset/report.md 记录（拒答准确率 5/6），产品默认走 rerank 兜底。
+        把它塞进 SHOULD_REFUSE 只会让这条测试长期红着没人看，反而掩盖真信号。
+    """
     for q in SHOULD_HIT:
-        top = rag.search(q, k=5)[0][1]
+        top = max(s for _, s in rag.search(q, k=5))       # 和生产一致：取全部候选的 max
         assert top >= svc.VEC_REJECT_THRESHOLD, (
             f"「{q}」库里有，却因向量分 {top:.4f} 低于阈值 {svc.VEC_REJECT_THRESHOLD} 被误拒")
     for q in SHOULD_REFUSE:
-        top = rag.search(q, k=5)[0][1]
+        top = max(s for _, s in rag.search(q, k=5))
         assert top < svc.VEC_REJECT_THRESHOLD, (
             f"「{q}」库里没有，却因向量分 {top:.4f} 高于阈值 {svc.VEC_REJECT_THRESHOLD} 被放行")
 
@@ -347,11 +402,38 @@ def test_vec_threshold_separates_hit_and_miss(rag):
 def test_guard_report_masks_pii(rag):
     """★ 补 PII 盲区：/guard-report 返回的 rejected 不得明文含手机号/身份证。
     之前 `_mask_pii` 定义了却从未调用，rejected 只做了 `[:40]` 截断，
-    而那条隐私数据仅 30 字，截断无效 → 手机号/身份证原样泄露。这条守住它。"""
-    rep = svc.guard_report()
+    而那条隐私数据仅 30 字，截断无效 → 手机号/身份证原样泄露。这条守住它。
+
+    ★★ 2026-09-25 二修：这条曾经是【摆设】，cc 审查发现、实测确认。
+        换真实语料后，真实被拦的 15 条全是"内设机构/院长信箱"这类导航残留，
+        **一条 PII 都没有** —— 于是把 `_mask_pii(...)` 改回 `c["text"]`（脱敏整个撤掉），
+        这条照样全绿。它守不住自己 docstring 里写的那个 bug。
+        原因：断言遍历的是"被拦的条目"，而被拦的条目里没有 PII，等于什么都没检查。
+        改法：先把脏数据夹具（含真手机号）跑一遍把关，临时塞进 rag.rejected 再走
+        guard_report() —— 保证【真的有 PII 经过脱敏函数】下面那两个 assert 才有意义。
+    """
+    from kb.loader import load_documents
+
+    docs, _ = load_documents(DIRTY_DIR)
+    _kept, rejected = rag._guard(docs)
+
+    # 先自查：夹具里必须真的有手机号，否则下面又变成"遍历空列表 → 永远全绿"
+    assert any("13812345678" in c["text"] for c, _ in rejected), (
+        "脏数据夹具里没有含手机号的块 —— 这条测试会退回摆设状态，去补 fixtures/dirty_inbox/04")
+
+    original = svc.rag.rejected
+    try:
+        svc.rag.rejected = rejected
+        rep = svc.guard_report()
+    finally:
+        svc.rag.rejected = original          # 别污染其它用例（rag 是模块级共享的）
+
     for item in rep["rejected"]:
         assert "13812345678" not in item["text"], f"手机号明文泄露：{item['text']}"
         assert "440301199001011234" not in item["text"], f"身份证明文泄露：{item['text']}"
+    # 反向确认：脱敏确实生效（不是"因为没走到那"才通过的）
+    assert any("手机号已隐匿" in item["text"] for item in rep["rejected"]), (
+        f"没看到脱敏痕迹，_mask_pii 大概没被调用：{rep['rejected']}")
 
 
 # ==================================================================
@@ -366,3 +448,78 @@ def test_web_page_has_no_innerhtml():
     """
     assert ".innerHTML" not in svc.HTML_PAGE, "HTML_PAGE 又用回 innerHTML 了（XSS 风险）"
     assert "textContent" in svc.HTML_PAGE, "渲染应走 textContent 纯文本路径"
+
+
+# ==================================================================
+# ⑦ 把关【覆盖度】：六道关每一道都必须真的被触发过
+# ==================================================================
+DIRTY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "dirty_inbox")
+
+
+def test_all_gates_fire_on_dirty_corpus(rag):
+    """★ 解决"关卡覆盖度"：一条断言保证 5 道关 + 版本冲突全都被触发。
+
+    问题背景（2026-09-25 量出来的）：
+        真实语料是学校公开制度，太干净 —— 入库跑完只有"太短碎屑"拦了 15 条，
+        其余四关 + 版本冲突触发次数全是 0。
+        这意味着"删掉隐私关"这类破坏，所有计数断言（68 / 15）依然全绿 ——
+        **覆盖度是 0，但看不出来**。
+
+    为什么不能靠真实语料证明：
+        防御性代码在干净输入上天然不触发，就像 WAF 不能用正常流量证明有效。
+        所以覆盖度只能用【注入的脏样本】证明 —— 见 tests/fixtures/dirty_inbox/README.md。
+
+    这里走的是完整链路（load_documents → _guard），不是直接喂 dict，
+    所以连 .md 解析、frontmatter、分块也一并被覆盖了。
+    """
+    from kb.loader import load_documents
+
+    docs, errors = load_documents(DIRTY_DIR)
+    assert errors == [], f"夹具文件解析失败：{errors}"
+    assert len(docs) == 10, f"夹具块数不对，加载了 {len(docs)} 块"
+
+    kept, rejected = rag._guard(docs)
+    reasons = [r for _, r in rejected]
+
+    for gate in ("太短碎屑", "完全重复", "近似重复", "个人隐私", "缺少来源", "旧版本"):
+        assert any(gate in r for r in reasons), (
+            f"【{gate}】关在脏数据夹具上没触发 —— 关卡被删了或改坏了。"
+            f"实际拦下的原因：{reasons}")
+
+    # ★ 关卡 5 有【两个半边】（source 空 / version 空），必须各测一次。
+    #   只测半边的后果实测过：把判断改成 `if not c.get("source")`（version 那半删掉），
+    #   上面那条 for 循环照样全绿 —— 因为"缺少来源"这个原因字符串还会出现一次。
+    #   所以这里按条款名分别点名，删掉任意半边都会红。
+    no_trace = {(c["doc"], c["clause"]) for c, r in rejected if "缺少来源" in r}
+    assert ("脏-缺少来源.md", "无来源") in no_trace, f"source 为空没被拦：{no_trace}"
+    assert ("脏-缺少日期.md", "无日期") in no_trace, \
+        f"version 为空没被拦（关卡5的 version 半边失效了）：{no_trace}"
+
+    # 夹具是纯脏数据，最后只该剩下 3 条「每组里活下来的那一条」：
+    #   完全重复组留先到的"重复块一" + 近似重复组留先到的"近似一" + 版本冲突留新版。
+    # ★ 写死具体条款而不是只写数字：数字断言在"多了/少了但总数不变"时会漏。
+    kept_ids = {(c["doc"], c["clause"]) for c in kept}
+    assert kept_ids == {
+        ("脏-完全重复.md", "重复块一"),
+        ("脏-近似重复.md", "近似一"),
+        ("脏-版本冲突.md", "审批权限"),
+    }, f"活下来的块不对：{[(c['doc'], c['clause']) for c in kept]}"
+    # 版本冲突留下的必须是新版那条（内容"宿舍大功率电器"，不是旧版的"请假审批"）
+    winner = next(c for c in kept if c["doc"] == "脏-版本冲突.md")
+    assert winner["version"] == "2026-09-25", f"留的是旧版：{winner['version']}"
+    assert "大功率电器" in winner["text"], f"版本冲突留错了版本：{winner['text'][:30]}"
+
+
+def test_real_corpus_gate_coverage_is_documented(rag):
+    """真实语料上哪些关【从不触发】—— 把这件事钉成一条会红的断言，而不是藏起来。
+
+    用途：如果哪天真实语料脏了、某道关开始触发，这条会红，
+    逼你去更新 README 里的"关卡覆盖度"表 —— 而不是让文档悄悄过期。
+    """
+    from collections import Counter
+
+    counts = Counter(r for _, r in rag.rejected)
+    # 当前真实语料只有"太短碎屑"触发（网页抓取残留全是短导航词）
+    assert set(counts) == {"太短碎屑"}, (
+        f"真实语料的拦截原因变了：{dict(counts)}。"
+        f"README 里的关卡覆盖度表需要同步更新。")

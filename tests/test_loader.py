@@ -50,7 +50,7 @@ def test_load_documents_counts():
     docs, errors = load_documents(DOCS_DIR)
     # 真实语料（学校公开制度）：纪律处分 61 块 + 请销假 7 块 + inbox 抓取残留 15 块 = 83 条原始块。
     # 注意：这里返回的是「解析出的全部原始块」，还没过入库把关；
-    # 过完关后才会变成 67 留 16 拦（那条断言在 test_guard.py::test_kept_count_matches_real_corpus）。
+    # 过完关后才会变成 68 留 15 拦（那条断言在 test_guard.py::test_kept_count_matches_real_corpus）。
     assert len(docs) == 83, f"解析出 {len(docs)} 条，应为 83 条"
     assert errors == [], f"不应有解析失败的文件：{errors}"
 
