@@ -19,10 +19,57 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 REQUIRED_META = ("doc", "version", "source")
+
+# ==================================================================
+# 网页「页脚模板」剥离
+# ==================================================================
+# ★ 为什么要有这段：知识库来自网页抓取，网页的页脚（上一篇/下一篇、学院名单、
+#   联系我们、地址、备案号）会和最后一条条款粘在一起被切成同一块。
+#   实测两块中招：
+#       《学生纪律处分管理规定》第五章-第三十条  原始 495 字 → 真条文仅 38 字（10%）
+#       《学生请销假制度》总则-第七条            原始 137 字 → 真条文仅 31 字（23%）
+#   这类块长度够、不重复、无手机号身份证、元信息齐全 → **现有 5 道把关一道都拦不住**。
+#
+# ★ 为什么标记分两组（这个区分是实测逼出来的，不是拍脑袋）：
+#   强特征（备案号/版权）固然准，但它们在页脚的**最后几行**；
+#   而 `content[:400]` 截断发生在页脚中途 —— 实测那一块被截后的 400 字里
+#   **根本没有「粤ICP备」/「版权所有」/「网站管理」**。
+#   所以规则必须也认靠前的弱特征（`上一篇`/`下一篇`/`联系我们`），否则
+#   在「上游已经出错」的库上会二次失效。只写备案号是不够的。
+CHROME_STRONG = ("粤ICP备", "粤公网安备", "版权所有", "网站管理", "网站维护", "扫码关注")
+CHROME_WEAK = ("上一篇", "下一篇", "欢迎访问", "联系我们", "党政办电话", "招生咨询")
+
+# 只有当页脚尾巴达到一定长度才切，避免正文里偶然出现"联系我们"就被削掉。
+# 30 字是拍的，但很保守：真页脚动辄上百字，而误伤代价是真条文被削。
+MIN_FOOTER_CHARS = 30
+
+
+def strip_footer(text: str) -> tuple[str, int]:
+    """剥掉文本尾部粘着的网页页脚，返回 (清洗后文本, 被剥掉的字数)。
+
+    没命中任何标记 → 原样返回，剥掉 0 字（不会误伤正常条款）。
+
+    ★ 返回的是个「二元组」，`body, n = strip_footer(t)` 这样接。
+      只写 `body = strip_footer(t)` 的话 body 会是整个元组，后面当字符串用会炸。
+    """
+    pos = None
+    for marker in CHROME_STRONG + CHROME_WEAK:
+        p = text.find(marker)          # find 找不到返回 -1，找到返回下标
+        if p >= 0 and (pos is None or p < pos):
+            pos = p                    # 取【最靠前】的那个标记当切点
+
+    # 没命中，或剩下的尾巴太短（不值得切，也可能是误伤）→ 不动
+    if pos is None or len(text) - pos < MIN_FOOTER_CHARS:
+        return text, 0
+
+    return text[:pos].strip(), len(text) - pos
 
 
 def _parse_frontmatter(text: str) -> dict | None:
@@ -89,11 +136,31 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             content = content.strip()
             if not content:
                 continue
+
+            # ★ 先剥页脚，再判长度 —— 顺序不能反。
+            #   页脚会「垫高」块的长度，先判长度的话这类块一道都拦不住。
+            content, stripped = strip_footer(content)
+            if stripped:
+                # 不静默清洗：剥了多少、哪一条，必须看得见（和下面截断是同一个道理）
+                logger.warning("「%s｜%s」剥离网页页脚 %d 字（剩 %d 字正文）",
+                               meta["doc"], clause.strip(), stripped, len(content))
+
+            # ★ 超长不再静默截断：丢了多少字要报出来。
+            #   为什么现在【不】改成"切成多块"：剥完页脚后全库超长块是 0 个，
+            #   为不存在的需求写切分器是过度设计。真需要时再补，见 README「下一步」。
+            #   （另：就算这里不截，bge-small-zh 也有 512 token 上限，
+            #    会在 embedding 里把尾巴悄悄吃掉 —— 所以截断这道保护不能整个撤掉。）
+            if len(content) > max_chars:
+                logger.warning("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）",
+                               meta["doc"], clause.strip(), len(content),
+                               max_chars, len(content) - max_chars)
+                content = content[:max_chars]
+
             docs.append({
                 "doc": meta["doc"],
                 "clause": clause.strip(),
                 "version": meta["version"],
                 "source": meta["source"],
-                "text": content[:max_chars],           # 超长截断，避免单块撑爆向量库
+                "text": content,
             })
     return docs, errors

@@ -337,6 +337,14 @@ class RAG:
                 newest[key] = c
                 continue
             old = newest[key]
+            # ⚠️ 将来要做「超长块切成多块」时，这里有个坑必须先看（2026-09-25 实测）：
+            #   如果切出来的多块沿用**同一个 clause 名 + 同一个 version**，
+            #   `c["version"] > old["version"]` 是 False → 走 else 分支 →
+            #   第 2 块起全被当成"旧版本"拦掉，而且拒绝理由写的是
+            #   「库里已有更新的 2026-01-01」——**完全误导**（其实是同一个版本）。
+            #   这不是版本冲突，是带着错误日志的静默丢数据。
+            #   → 所以真要切多块，块名必须错开人工命名空间：
+            #     人工子条款用「（一）（二）」，自动切的用「#2」「#3」。
             if c["version"] > old["version"]:       # 新来的更新 → 换掉旧的
                 rejected.append((old, f"旧版本，被新版取代（{old['version']} → {c['version']}）"))
                 newest[key] = c
