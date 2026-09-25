@@ -68,6 +68,7 @@ from langchain_core.messages import HumanMessage    # noqa: E402
 from langchain_deepseek import ChatDeepSeek         # noqa: E402
 from pydantic import BaseModel, Field               # noqa: E402
 from rank_bm25 import BM25Okapi                     # noqa: E402
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,58 @@ PII_PATTERNS = [(r"1[3-9]\d{9}", "手机号"), (r"\d{17}[\dXx]", "身份证号")
 # 两边中间空着 0.22 的间隔，取中间值 0.55，离两边都留了余量。
 # ★ 和 DUP_THRESHOLD=0.90 是同一套做法：先量出分布，再取中间，不拍脑袋。
 VEC_REJECT_THRESHOLD = 0.55
+
+# 单次大模型调用的超时上限（秒），可用环境变量覆盖。
+# ★ 重要：这个超时【没法】通过 ChatDeepSeek(timeout=...) 来设置 —— 实测它的 model_fields
+#   里压根没有 timeout 字段，而且 model_config 是 extra='ignore'，
+#   意味着你传了不会报错，但会被【静默忽略】：看着像加了超时，其实一秒都没生效。
+#   所以只能在调用点自己兜（见下面的 _invoke_llm）。
+LLM_TIMEOUT_SEC = float(os.environ.get("LLM_TIMEOUT_SEC", "30"))
+
+
+class LLMCallError(Exception):
+    """一次大模型调用失败了：超时 / 限流 / 网络错误 / 返回了解析不了的东西。
+
+    为什么要单独定义一种异常，而不是就地吞掉？
+        它必须和「知识库里没这个东西」严格区分开 ——
+        后者是正常的业务结果（拒答），前者是【故障】。
+        两者一旦混在一起，就会把"模型挂了"伪装成"库里没有"，
+        调用方看到的是一条平平无奇的拒答，永远发现不了服务其实已经不正常了。
+    """
+
+
+# 专门给大模型调用用的小线程池：为了能在调用点加超时（主线程不能无限期干等）。
+_LLM_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm")
+
+
+def _invoke_llm(llm, messages, timeout=None):
+    """调一次大模型，最多等 timeout 秒；超时和报错统一包装成 LLMCallError 抛出。
+
+    为什么要用线程池包这一层？
+        llm.invoke() 是同步阻塞的，模型卡住时整个接口会跟着卡死（请求堆积 → 服务不可用）。
+        丢进线程池后用 future.result(timeout=...) 取结果，主线程最多等 timeout 秒就走人。
+
+    ★ timeout 参数这里默认写成 None、在函数体内再去读 LLM_TIMEOUT_SEC，
+      而不是直接写成 timeout=LLM_TIMEOUT_SEC —— 因为 Python 的默认参数在
+      【函数定义的那一刻】就求值完毕了，写死的话以后改 LLM_TIMEOUT_SEC
+      （或者测试里 monkeypatch 它）都不会生效，又是一个"看着能配、其实配不动"的坑。
+
+    ★ 坦白一个不完美的地方：超时后那个后台线程其实还在跑（cancel() 对已经开始执行的
+      任务无效），它不会拖垮接口，但也没法真正掐断 —— 这是同步调用的天花板，
+      要彻底解决得改异步 + 客户端级超时，属于下一阶段的事，这里先记着。
+    """
+    if timeout is None:
+        timeout = LLM_TIMEOUT_SEC
+    fut = _LLM_POOL.submit(llm.invoke, messages)
+    try:
+        return fut.result(timeout=timeout)
+    except FuturesTimeout:
+        fut.cancel()
+        raise LLMCallError(f"大模型调用超时（超过 {timeout:g} 秒）")
+    except LLMCallError:
+        raise
+    except Exception as e:
+        raise LLMCallError(f"大模型调用失败：{type(e).__name__}: {e}")
 
 
 def norm(text):
@@ -133,7 +186,12 @@ class RAG:
         ★ 自检 / 测试这条路径全程不碰 llm，所以没 key 也能跑完。
         """
         if self._llm is None:
-            self._llm = ChatDeepSeek(model="deepseek-chat", temperature=0)
+            # max_retries=2：遇到限流或瞬时网络抖动时自动重试 2 次。
+            # ★ 这个字段是真存在的（实测 ChatDeepSeek.model_fields 里有），而且
+            #   【默认值是 None，也就是不重试】—— 所以必须显式写上才有效果。
+            #   （对照：timeout 字段并不存在，写了会被静默忽略，见 LLM_TIMEOUT_SEC 的注释。）
+            self._llm = ChatDeepSeek(model="deepseek-chat", temperature=0,
+                                     max_retries=2)
         return self._llm
 
     def startup(self):
@@ -298,16 +356,28 @@ class RAG:
             f"问题：{query}\n\n候选资料：\n{numbered}\n\n"
             "只输出 JSON：{\"scores\":[{\"id\":1,\"score\":0到10的整数,\"reason\":\"一句话\"}]}"
         )
-        resp = self.llm.invoke([HumanMessage(content=prompt)]).content
+        resp = _invoke_llm(self.llm, [HumanMessage(content=prompt)]).content
         raw = re.sub(r"^```(?:json)?|```$", "", resp.strip(), flags=re.M).strip()
         try:
             data = json.loads(raw)
             sc = {int(x["id"]): (int(x["score"]), x.get("reason", "")) for x in data["scores"]}
         except Exception:
-            sc = {i: (0, "") for i in range(1, len(candidates) + 1)}
+            # ★ 这里【绝不】再静默给全 0 分 —— 那正是最危险的一种写法：
+            #   "模型返回了垃圾" 会被伪装成 "库里没有这个东西"（全 0 分 → 触发拒答），
+            #   调用方看到的是一条平平无奇的拒答，故障就被永久掩盖了。
+            #   现在改成：记下原始返回 + 抛 LLMCallError，由 /chat 决定降级还是暴露。
+            logger.error("rerank 返回的内容不是合法 JSON，原始返回前 300 字符：%r", raw[:300])
+            raise LLMCallError("rerank 返回非 JSON，无法解析评分")
         # 大模型只回 id 和分数，我们按 id 把【原始候选】捞回来（candidates 下标从 0 开始，id 从 1 开始）
         out = []
+        valid_ids = range(1, len(candidates) + 1)
         for i, (score, reason) in sorted(sc.items(), key=lambda kv: kv[1][0], reverse=True):
+            # ★ id 越界校验：大模型会幻觉出不存在的 id（超出范围、0 甚至负数），
+            #   以前直接 candidates[i - 1] 会 IndexError → 接口裸 500。现在跳过并记日志。
+            if i not in valid_ids:
+                logger.warning("rerank 回了越界的 id=%s（本次候选只有 %d 条），已跳过",
+                               i, len(candidates))
+                continue
             chunk, vec_score = candidates[i - 1]
             out.append((chunk, float(vec_score), score, reason))
         return out
@@ -316,7 +386,9 @@ class RAG:
         ctx = "\n".join(f"- {c['text']}" for c in chunks)
         prompt = ("你是客服助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
                   f"资料：\n{ctx}\n\n问题：{question}")
-        return self.llm.invoke([HumanMessage(content=prompt)]).content
+        # 超时 / 限流 / 网络错误都会被 _invoke_llm 统一转成 LLMCallError 抛出来，
+        # 不再让异常一路裸奔成 500 —— /chat 会接住它、记日志并降级。
+        return _invoke_llm(self.llm, [HumanMessage(content=prompt)]).content
 
 
 rag = RAG()
@@ -342,7 +414,11 @@ app = FastAPI(title="客服知识库问答", lifespan=lifespan)
 
 # pydantic 模型：规定"请求体必须长这样"，传错了框架自动返回 422，不用你写判断
 class ChatRequest(BaseModel):
-    question: str = Field(..., description="用户的问题", min_length=1)
+    # max_length=500：不加这道闸的话，别人可以丢一篇几万字的问题过来 ——
+    #   ① 这段文本会被原样拼进 prompt，直接烧掉大量 token（费钱又慢）；
+    #   ② 极端情况下会顶爆模型的上下文窗口，本来能答的问题也变成报错。
+    #   pydantic 会在入口处就挡掉并返回 422，不用我们自己写 if 判断。
+    question: str = Field(..., description="用户的问题", min_length=1, max_length=500)
     top_k: int = Field(5, description="粗捞几条", ge=1, le=10)
     use_rerank: bool = Field(True, description="是否启用 rerank 精排")
 
@@ -395,9 +471,20 @@ def chat(req: ChatRequest):
 
     took = lambda: int((time.time() - t0) * 1000)          # 匿名函数，算"到现在用了多少毫秒"
 
-    if req.use_rerank:
-        ranked = rag.rerank(req.question, cands)          # [(块, 向量分, 精排分, 理由)]
+    use_rerank = req.use_rerank
+    ranked = None
+    if use_rerank:
+        try:
+            ranked = rag.rerank(req.question, cands)      # [(块, 向量分, 精排分, 理由)]
+        except LLMCallError as e:
+            # ★ 降级而不是崩：rerank 这一层挂了（超时 / 限流 / 返回了解析不了的 JSON），
+            #   就退回粗捞路径继续答 —— 绝不把它伪装成"库里没有"直接拒答。
+            #   use_rerank 置 False 后下面会走 else 分支，响应里也会如实标 rerank_used=False，
+            #   调用方一眼能看出"这次没走精排"，而不会误以为是模型觉得库里没有。
+            logger.warning("rerank 不可用（%s），本次降级为粗捞路径", e)
+            use_rerank = False
 
+    if use_rerank:
         # ★★ 拒答硬短路：连最高分的候选都不到 5 分 = 库里根本没这个东西。
         #    这时【直接返回，压根不调用生成模型】。
         #    之前的写法是"全部低分也硬塞第一条进去"，寄希望于提示词让模型拒答 ——
@@ -433,9 +520,18 @@ def chat(req: ChatRequest):
         # 关掉 rerank 时用的是粗捞的向量分，比精排分粗（"意思接近但答非所问"更容易漏进来），
         # 所以默认还是开着 rerank —— 关掉只是留一个对比开关，不是关闭防线。
 
-    answer = rag.answer(req.question, ctx)
+    try:
+        answer = rag.answer(req.question, ctx)
+    except LLMCallError as e:
+        # 资料命中了，但生成这一步挂了 —— 如实告诉调用方"是模型的问题"，
+        # 不能伪装成拒答（knowledge_hit 仍是 True，因为资料确实命中了）。
+        logger.error("生成答案失败：%s", e)
+        return ChatResponse(
+            answer="⚠️ 已找到相关资料，但模型调用失败（超时或限流），请稍后重试。",
+            sources=sources, took_ms=took(), rerank_used=use_rerank, knowledge_hit=True)
+
     return ChatResponse(answer=answer, sources=sources,
-                        took_ms=took(), rerank_used=req.use_rerank)
+                        took_ms=took(), rerank_used=use_rerank)
 
 
 # ==================================================================
