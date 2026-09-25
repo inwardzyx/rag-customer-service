@@ -333,6 +333,26 @@ python -m pytest tests/ -q
 #     所以夹具里 source 空、version 空【各准备了一份】，并分别点名断言。
 ```
 
+**上面这些是手工演示。2026-09-25 把它们做成了可复现的工具** —— `scripts/mutate_check.py`，
+现在覆盖 6 个变异（含上面 5 个之外的数据层那几个）：
+
+```bash
+python scripts/mutate_check.py            # 跑全部，约 10 秒（只有第 1 条要加载模型）
+python scripts/mutate_check.py --list     # 先看清单，了解每个变异"模拟的是什么真实风险"
+```
+
+判据还是那一个：**变红才算抓住**。工具本身有两处是刻意设计的，都踩过坑：
+
+- **锚点失效直接报错，不静默跳过** —— 一条测试要是能被悄悄跳过，它自己就退化成摆设了，
+  所以"改坏代码失败"必须吵出来，不能糊过去；
+- 跑完校验所有涉及文件的**字节哈希**，恢复不一致就报失败。恢复用 `read_bytes` / `write_bytes`
+  而不是 `read_text` / `write_text` —— 后者在 Windows 上会把 LF 悄悄转成 CRLF，
+  文件内容看着没变、换行全变了，下次提交就是一大片假 diff。
+
+退出码是 0 / 1，所以它本身也能当门禁；但**没接 CI**，理由：第 1 条要加载 embedding 模型、
+得装全套依赖，而且每次会改工作区文件。在关键逻辑（把关阈值、切片、版本比较）改完之后
+手动跑一次，性价比更高。
+
 ★ **④ ⑤ 是同一类教训，值得单独说**：一条测试可以"常年绿着"却什么都没在测 ——
 因为它断言的那个集合是空的、或者只覆盖了条件的一半。
 判断办法只有一个：**故意把被测的东西改坏，看它红不红**。不红的就不是测试，是装饰。
@@ -436,11 +456,12 @@ rag-customer-service/
 │   ├── rag_concepts_demo.py
 │   ├── step5_ingest_guard_demo.py
 │   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
-├── scripts/                     # 阈值是怎么量出来的（可复现，不进运行时）
+├── scripts/                     # 可复现的量测与验证工具（不进运行时）
 │   ├── measure_dup_distribution.py   # 83 块两两全量算余弦（3403 对）
-│   └── measure_dup_threshold.py      # 真重复/同义改写/不同条款 三类配对各是多少
+│   ├── measure_dup_threshold.py      # 真重复/同义改写/不同条款 三类配对各是多少
+│   └── mutate_check.py               # 变异测试：故意改坏代码，看测试红不红（6 条）
 └── tests/                       # 共 54 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
-    ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（22 条）
+    ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（24 条）
     ├── test_loader.py           # kb/loader 解析单测（20 条，不碰模型 → CI 快 job 跑它）
     ├── test_eval_set.py         # 评测集自洽 + 离线质量门禁（5 条）
     ├── test_llm_resilience.py   # 模型故障守门：超时 / 返回垃圾 / 幻觉 id / 超长输入（5 条）
