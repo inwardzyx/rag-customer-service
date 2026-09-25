@@ -281,10 +281,11 @@ rag-customer-service/
 │   ├── rag_concepts_demo.py
 │   ├── step5_ingest_guard_demo.py
 │   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
-└── tests/                       # 共 33 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
+└── tests/                       # 共 38 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
     ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（19 条）
     ├── test_loader.py           # kb/loader 解析单测（9 条，不碰模型 → CI 快 job 跑它）
-    └── test_eval_set.py         # 评测集自洽 + 离线质量门禁（5 条）
+    ├── test_eval_set.py         # 评测集自洽 + 离线质量门禁（5 条）
+    └── test_llm_resilience.py   # 模型故障守门：超时 / 返回垃圾 / 幻觉 id / 超长输入（5 条）
 ```
 
 ---
@@ -355,6 +356,7 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 | **没部署** | 只能本地跑 | 免费平台要塞 `DEEPSEEK_API_KEY`，**别人点开就能刷你的 key**；平台一 sleep 就 502，比没链接更糟。替代方案：录 60-90 秒 GIF 放 README |
 | **没有 Dockerfile** | 只能本地跑 | 顺序是有意的：先让 CI 慢 job 把「Linux + py3.14 装依赖」跑通，Dockerfile 就只剩打包这一件事 |
 | **语料是虚构的** | 10 条自己写的电商条款 | 换真实语料会让"0.90 是实测的"更难解释。**可控的假数据 > 不可控的真数据**，这个项目要证明的是机制，不是数据 |
+| **超时只能"不等"，不能"掐断"** | 超时后那个后台线程其实还在跑完 | `llm.invoke()` 是同步阻塞的，用线程池 + `future.result(timeout=)` 只能保证主线程不再干等；`cancel()` 对已经开始执行的任务无效。要真正掐断得改异步 + 客户端级超时，属于下一阶段，这里先如实记着 |
 
 ### 下一步的顺序
 
@@ -364,5 +366,6 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 4. ~~GitHub Actions CI~~ ✅ 已完成（`.github/workflows/ci.yml`，快慢双 job）
 5. ~~补上缺失的关卡5「缺少来源/日期」~~ ✅ 已完成（顺手修的，见上面「入库把关」）
 6. ~~结构化日志~~ ✅ 已完成（`service.py` / `env_compat.py` / `evalset/run_eval.py` 运行时 `print` 换成 `logging`，入口处 `basicConfig` 保住输出；`experiments/` 教学脚本保留 `print` —— 那里逐行打印是刻意的）
-7. **Dockerfile** —— 92MB 模型的镜像怎么瘦身（CI 慢 job 已预先验证 Linux + py3.14 装得上）
-8. 录一段 GIF 放 README 顶部 —— 30 分钟，零风险，效果接近一个在线链接
+7. ~~LLM 调用的超时 / 重试 / 降级~~ ✅ 已完成（commit `bf58b73`：`_invoke_llm` 在调用点兜超时、rerank 解析失败不再静默给 0 分、幻觉 id 越界跳过、`question` 加 `max_length`；`tests/test_llm_resilience.py` 5 条守门测试，已过变异测试验证不是摆设）
+8. **Dockerfile** —— 92MB 模型的镜像怎么瘦身（CI 慢 job 已预先验证 Linux + py3.14 装得上）
+9. 录一段 GIF 放 README 顶部 —— 30 分钟，零风险，效果接近一个在线链接
