@@ -151,6 +151,51 @@ def test_rejected_old_version(rag):
     assert any("旧版本" in r for _, r in rejected), f"旧版本没被拦：{rejected}"
 
 
+def test_version_compare_survives_unpadded_date(rag):
+    """★ 版本新旧不许靠"ISO 补零"这个巧合（2026-09-25 实测）。
+
+    旧代码是 `c["version"] > old["version"]` 直接比字符串，而
+    `'2026-9-5' > '2026-09-25'` 竟然是 True —— 字符串逐位比字符编码，
+    比到第 6 位 `'9' > '0'` 就下结论了，它不知道"9 月 < 10 月"。
+    于是【一个没补零的旧版会把库里真正的新版挤掉】，
+    而拒绝理由还写成「被新版取代（2026-09-25 → 2026-9-5）」—— 新旧完全说反。
+
+    ★ 顺序刻意让 2026-09-25 先进（模拟"库里已经有一版"），未补零的后到。
+    ★ 两条正文用的是 test_rejected_old_version 里那两条已知能走通前面几关的文本，
+      所以这条测的确实是版本比较，不是被别的关卡拦在了前面。
+    """
+    docs = [
+        dict(doc="t.md", clause="同一条", version="2026-09-25", source="测试",
+             text="宿舍内禁止使用大功率电器，一经发现没收器具并给予通报批评处理。"),
+        dict(doc="t.md", clause="同一条", version="2026-9-5", source="测试（未补零）",
+             text="学生请假一天以内由班主任审批，一周以内由二级学院审批，一周以上须三级审批。"),
+    ]
+    kept, rejected = rag._guard(docs)
+    assert len(kept) == 1
+    assert kept[0]["version"] == "2026-09-25", (
+        f"未补零的 2026-9-5 把更新的 2026-09-25 挤掉了（还在按字符串比）："
+        f"留下的是 {kept[0]['version']}，拒绝理由 {rejected}")
+
+
+def test_unparseable_version_rejected_not_guessed(rag):
+    """★ 比不出新旧时【不许猜】—— 明确拦下并说清原因。
+
+    为什么专门守这条：`_version_key` 解析失败返回 None，调用方必须显式处理。
+    如果哪天有人图省事改成"解析不出来就退回字符串比较"，
+    就等于"看着校验过了，其实没有"，比不校验更危险（下一个读代码的人会以为这里安全）。
+    """
+    docs = [
+        dict(doc="t.md", clause="同一条", version="2026-09-25", source="测试",
+             text="宿舍内禁止使用大功率电器，一经发现没收器具并给予通报批评处理。"),
+        dict(doc="t.md", clause="同一条", version="2026/09/25", source="测试（斜杠）",
+             text="学生请假一天以内由班主任审批，一周以内由二级学院审批，一周以上须三级审批。"),
+    ]
+    kept, rejected = rag._guard(docs)
+    assert len(kept) == 1
+    assert any("无法比较新旧" in r for _, r in rejected), (
+        f"日期格式比不出来时应当拦下并说明原因，实际 rejected={rejected}")
+
+
 def test_rejected_privacy(rag):
     """个人隐私关：含手机号 / 身份证的文本要被拦下，不能进库。
     （真实公开制度里没有 PII，所以同样靠构造样本验证这一关还活着。）"""

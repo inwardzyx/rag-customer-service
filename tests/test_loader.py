@@ -133,6 +133,46 @@ def test_bad_frontmatter_goes_to_errors():
     assert errors == [p]            # 坏文件进了 errors，而不是被吞掉
 
 
+def test_no_heading_is_an_error_not_silence():
+    r"""★ 一个 ## 都切不出来 → 产出 0 块，必须走 errors（以前是【静默的】）。
+
+    最容易踩的写法：标题漏了 ## 后的空格（写成「##第三条」）。
+    实测 `^##\s+` 一个都匹配不上 → re.split 只返回 1 段 → `[1:]` 是空列表
+    → 循环一次都不进 → 不 append、不打日志、也不进 errors。
+    结果：docs 里没有它、errors 里没有它、日志里也没有它 —— **整篇文档人间蒸发**。
+
+    ★ 为什么走 errors 这条通道：它本来就存在（元信息不合格走的就是它），
+      不需要新机制，而且 startup 的日志和 /health 的数字都能看见它。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "t.md")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("---\ndoc: t.md\nversion: 2026-01-01\nsource: x\n---\n"
+                    "##第一条\n标题漏了空格，切不出来。")
+        docs, errors = load_documents(td)
+    assert docs == [], f"不该切出块来，实际切出 {len(docs)} 块"
+    assert errors == [p], f"整篇 0 块却没有任何报错（静默丢整篇）：errors={errors}"
+
+
+def test_preamble_before_first_heading_is_reported(caplog):
+    """★ 第一个 ## 之前的正文会被丢弃 —— 可以丢，但不能不吭声。
+
+    `re.split` 的第 0 段就是"第一个 ## 之前的所有内容"，而 `[1:]` 把它切掉了。
+    它确实不属于任何条款（进库也不是"条款块"），但丢得没痕就是静默改数据 ——
+    和 `content[:400]` 截断、页脚剥离是同一个道理。
+    （真实语料这里只有空行，所以今天丢的是 0 字。）
+    """
+    import logging
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "t.md")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("---\ndoc: t.md\nversion: 2026-01-01\nsource: x\n---\n"
+                    "为规范学生管理，特制定本规定。\n## 第一条\n正文。")
+        with caplog.at_level(logging.WARNING):
+            load_documents(td)
+    assert "第一个 ## 之前" in caplog.text, f"导语被丢了却没报出来：{caplog.text!r}"
+
+
 def test_kb_before_inbox_order():
     # 证明排序真的把 kb 排在了 inbox 前面 —— 这是「脏副本不会挤掉干净条款」的前提。
     docs, _ = load_documents(DOCS_DIR)
@@ -187,6 +227,25 @@ def test_strip_footer_too_short_tail_is_kept():
     t = "学生违纪后请联系我们处理。" + "补充说明。" * 2
     body, n = strip_footer(t)
     assert n == 0, f"短尾巴被误切了：{body!r}"
+
+
+def test_strip_footer_ignores_marker_mid_sentence():
+    """★ 句中出现的标记不算页脚 —— 削错是真条文被永久删掉（2026-09-25 补）。
+
+    这条是实测逼出来的：改造前用的是**全串** `text.find(marker)`，
+    下面这条 65 字的合法条款会被从"联系我们"处切断、削掉 53 字，
+    真条文「按旷课论处」永久丢失，而日志写的是「剥离网页页脚 53 字」
+    —— 把正文当页脚报了。现在只认【行首】标记，所以 n 必须是 0。
+    （真实语料的两个切点本来就在行首，所以这条收紧不改变任何现有结果。）
+
+    ★ 尾巴长度刻意做到 40+ 字 > MIN_FOOTER_CHARS：
+      否则会被"短尾巴不切"那条规则替它挡住 bug，这条就测不出东西了。
+    """
+    t = ("第三十条 学生如有疑问请联系我们，联系电话 020-87024621。"
+         "未按时办理销假且超过准假时间的，按旷课论处，并记入学生档案。")
+    body, n = strip_footer(t)
+    assert n == 0, f"句子中间的『联系我们』被当成页脚，真条文被削掉了：{body!r}"
+    assert body == t
 
 
 def test_strip_is_not_silent(caplog):

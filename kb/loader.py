@@ -50,6 +50,24 @@ CHROME_WEAK = ("上一篇", "下一篇", "欢迎访问", "联系我们", "党政
 # 30 字是拍的，但很保守：真页脚动辄上百字，而误伤代价是真条文被削。
 MIN_FOOTER_CHARS = 30
 
+# ★ 只认【行首】的标记（行首允许有空格/制表符）—— 网页页脚永远自成一行。
+#   为什么必须收紧（2026-09-25 实测）：原先用 `text.find(marker)` 是【全串查找】，
+#   句中命中照样切断。实测一条 65 字的合法条款：
+#       「第三十条 学生如有疑问请联系我们，联系电话 020-87024621。未按时办理销假
+#         且超过准假时间的，按旷课论处，并记入学生档案。」
+#   被从"联系我们"处切断，削掉 53 字 → 真条文「按旷课论处」永久丢失，
+#   而日志写的是「剥离网页页脚 53 字」—— 把正文当页脚报了。
+#   削错是真条文永久丢失，和误删条款是同一类不可逆损失（与 DUP_THRESHOLD 宁严勿松同理）。
+#   实测真实语的切点（纪律处分『上一篇』、请销假『联系我们』）本来就在行首，
+#   所以这条收紧【不改变任何现有结果】（剥离字数仍是 457 / 106），只是把误伤面收窄。
+#
+#   语法点：
+#     `"|".join(...)` 用竖线把多个标记拼成一个正则分支，等价于"命中其中任意一个"；
+#     `re.escape(m)` 把标记里的特殊字符转义成纯文本（这些标记没有，是常识性保险）；
+#     `(?m)` 是【多行模式】，让 ^ 表示"每一行的开头"而不是"整个字符串的开头"。
+_CHROME_RE = re.compile(
+    r"(?m)^[ \t]*(?:" + "|".join(re.escape(m) for m in CHROME_STRONG + CHROME_WEAK) + r")")
+
 
 def strip_footer(text: str) -> tuple[str, int]:
     """剥掉文本尾部粘着的网页页脚，返回 (清洗后文本, 被剥掉的字数)。
@@ -58,15 +76,19 @@ def strip_footer(text: str) -> tuple[str, int]:
 
     ★ 返回的是个「二元组」，`body, n = strip_footer(t)` 这样接。
       只写 `body = strip_footer(t)` 的话 body 会是整个元组，后面当字符串用会炸。
-    """
-    pos = None
-    for marker in CHROME_STRONG + CHROME_WEAK:
-        p = text.find(marker)          # find 找不到返回 -1，找到返回下标
-        if p >= 0 and (pos is None or p < pos):
-            pos = p                    # 取【最靠前】的那个标记当切点
 
-    # 没命中，或剩下的尾巴太短（不值得切，也可能是误伤）→ 不动
-    if pos is None or len(text) - pos < MIN_FOOTER_CHARS:
+    ★ 2026-09-25 改造：从"全串 find 后手算最靠前"换成"行首锚定的正则 search"。
+      两者取到的是【同一个位置】—— 正则的 search 本身就是最左优先的，
+      所以这不是"加了规则"，而是用引擎自带的语义换掉了那个手写的 min 循环
+      （改完代码反而更短）。实测剥离字数一字不差，但不再误伤句中的"联系我们"。
+    """
+    m = _CHROME_RE.search(text)     # search 返回【最靠左】的那次匹配，没有则 None
+    if m is None:
+        return text, 0
+
+    pos = m.start()                 # 注意这是"行首"的位置，不是标记本身的位置
+    # 尾巴太短（不值得切，也可能是误伤）→ 不动
+    if len(text) - pos < MIN_FOOTER_CHARS:
         return text, 0
 
     return text[:pos].strip(), len(text) - pos
@@ -131,7 +153,27 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             continue
 
         body = text.split("---", 2)[-1]                # 取关闭的 --- 之后的正文
-        for sec in re.split(r"(?m)^##\s+", body)[1:]:  # 按「行首 ## 」切成一条条条款
+        sections = re.split(r"(?m)^##\s+", body)       # 第 0 段 = 第一个 ## 之前的内容
+
+        # ★ 一个 ## 都没切出来 = 这篇文档产出 0 块。以前这里是【静默的】：
+        #   docs 里没有它、errors 里没有它、日志里也没有它 —— 整篇人间蒸发。
+        #   最容易踩的写法：标题漏了 ## 后的空格（写成「##第三条」），
+        #   实测这种写法 `^##\s+` 一个都匹配不上 → 返回 1 段 → [1:] 是空的 → 循环一次都不进。
+        #   当成坏文件走 errors，和上面"元信息不合格"同一个通道，
+        #   这样 startup 日志和 /health 的数字都能看见它。
+        if len(sections) == 1:
+            errors.append(str(path))
+            continue
+
+        # ★ 第一个 ## 之前还有正文 → 它不属于任何条款，会被丢掉。
+        #   丢可以（它进库也不是"条款块"），但不能静默 —— 和截断、剥页脚同一个道理。
+        #   真实语料这里只有空行（实测 3 个文件 head 全是 0 字），所以今天丢的是 0 字。
+        head = sections[0].strip()
+        if head:
+            logger.warning("「%s」第一个 ## 之前有 %d 字正文，不属于任何条款，已丢弃：%r",
+                           meta["doc"], len(head), head[:30])
+
+        for sec in sections[1:]:                       # 按「行首 ## 」切成一条条条款
             clause, _, content = sec.partition("\n")
             content = content.strip()
             if not content:
