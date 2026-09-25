@@ -1,0 +1,18 @@
+# 只有 experiments/ 下的教学脚本才需要这些 —— 起服务、跑测试都不需要。
+#
+# 为什么单独拆一个文件：
+#   这几个包体积大（langgraph 会拖一整套依赖），但 service.py 一行都没 import。
+#   混在 requirements.txt 里，别人 clone 下来装依赖就会多装一堆用不到的东西，
+#   也会误以为"这个项目用了 LangGraph"—— 其实 LangGraph 只出现在学习过程的教学脚本里。
+#
+# 装法（想跑 experiments/ 里的脚本时才装）：
+#   D:\Python-project\.venv\Scripts\python.exe -m pip install -r requirements-experiments.txt
+#   （会先自动把 requirements.txt 也装上）
+
+-r requirements.txt
+
+# LangGraph：step1~step3 教学脚本用它搭 StateGraph / ToolNode
+langgraph==1.2.11
+# langchain 本体 + 文本切分器：只在 experiments/ 里用到
+langchain==1.4.0
+langchain-text-splitters==1.1.2

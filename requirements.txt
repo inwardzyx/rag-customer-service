@@ -1,11 +1,19 @@
-# 客服知识库问答（RAG）依赖清单
+# 客服知识库问答（RAG）依赖清单 —— 【起服务 / 跑测试】只需要这些
 # 版本为本机实测可跑的组合（Python 3.14 + Windows 11）
+#
+# ★ 2026-09-25 精简过一次：原来这里混进了 langgraph / langchain / langchain-text-splitters，
+#   但它们【只有 experiments/ 下的教学脚本用】—— service.py 从头到尾只 import
+#   langchain_core.messages 和 langchain_deepseek。装一堆用不到的重框架，
+#   别人看仓库第一眼就是"依赖没理清"。教学用的那几个挪到了 requirements-experiments.txt。
+#
+# 装法（别裸敲 pip —— 这台机器上裸 pip 命中 conda base，不是项目环境）：
+#   D:\Python-project\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-langgraph==1.2.11
-langchain==1.4.0
+# ---- 大模型调用 ----
+# 只声明【代码里直接 import 的】：langchain_core.messages.HumanMessage、
+# langchain_deepseek.ChatDeepSeek。它们的传递依赖（如 langchain-openai）交给 pip 解析。
 langchain-core==1.6.3
 langchain-deepseek==1.1.0
-langchain-text-splitters==1.1.2
 
 # 读 .env 文件（配密钥用，模板见 .env.example）
 # 注：它本来是 langchain 的间接依赖，这里显式写出来 ——
@@ -16,7 +24,7 @@ python-dotenv==1.2.3
 jieba==0.42.1
 rank-bm25==0.2.2
 
-# embedding 模型加载（bge-small-zh-v1.5）
+# embedding 模型加载（bge-small-zh-v1.5，约 92MB，首次启动会下载一次）
 # 注：fastembed 会依赖 mmh3；若本机应用控制策略拦掉 mmh3 的 DLL，
 #     项目里的 env_compat.py 会用纯 Python 版兜底，不影响运行。
 fastembed==0.8.1
@@ -31,7 +39,7 @@ pydantic==2.13.5
 # 测试（回归断言用，跑法见 README）
 pytest==9.1.1
 
-# 向量检索加速（本项目没装）：目前直接用 numpy 全量点乘，7 条语料完全够。
-# 语料上千条之后才需要换成 faiss / HNSW。
+# 向量检索加速（本项目没装）：目前直接用 numpy 全量点乘暴力算，
+# 68 块语料下"加载模型 + 建库"全程 3.6 秒，完全够。语料上千条之后再考虑 faiss / HNSW。
 # 注：本机试装 faiss 时它的 DLL 被应用控制策略拦了（和 mmh3 同一个坑），所以干脆没引入。
 # faiss-cpu==1.13.0
