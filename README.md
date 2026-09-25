@@ -153,7 +153,7 @@ VEC_REJECT_THRESHOLD = 0.55
 | `experiments/rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
 | `experiments/step5_ingest_guard_demo.py` | **入库前把关** | 垃圾进 = 幻觉出，必须在入口拦 |
 | `service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
-| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 19 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
+| `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 22 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
 | `kb/loader.py` + `docs/` | 知识库改成**从文件读**（kb/inbox 分目录） | 从"手敲 10 条常量"到"扔 md 就入库"；loader 可脱离模型独立单测 |
 | `evalset/` | 20 题评测集（14 应答题 + 6 拒答题） | 拿到 Recall@5 / 漏答率 / 拒答准确率三个数字，"可度量"才成立 |
 | `env_compat.py` | 绕开本机 DLL 被策略拦截的坑 | 见下方"踩过的坑" |
@@ -307,7 +307,7 @@ BM25 是**字面**匹配：它拿"修""坏"这两个单字去查，而文档里�
 - **服务启动时加载一次资源**：把模型写进全局对象，而不是每个请求里重建（服务化最容易犯的错）
 - **本机 DLL 会被应用控制策略拦截**：faiss 和 mmh3 都中招
   （`DLL load failed: 应用程序控制策略已阻止此文件`）。
-  faiss 干脆没引入 —— 向量检索直接用 **numpy 全量点乘**，7 条语料完全够，
+  faiss 干脆没引入 —— 向量检索直接用 **numpy 全量点乘**，68 块语料完全够，
   上千条再考虑换 HNSW/faiss；
   mmh3 在 `env_compat.py` 里给了**纯 Python 的 murmur3 实现**兜底
   —— 它算出来的值和 C 版逐位一致（文件内有官方测试向量自检），不是凑数返回 0
@@ -430,7 +430,9 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 | job | 装什么 | 跑什么 | 实测耗时 |
 |---|---|---|---|
 | **fast** | 只装 `pytest` | `tests/test_loader.py`（9 条） | **0.03 秒** |
-| **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py`（24 条） | 15 秒起（首次还要下模型） |
+| **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py` + `test_llm_resilience.py`（32 条） | 15 秒起（首次还要下模型） |
+
+> 两个 job 加起来 **覆盖全部 41 条**（9 + 32），不存在「只在本地跑过」的测试。
 
 **为什么拆**：两类测试成本差约 500 倍（实测 0.03s vs 15s）。合成一个 job 的话，改一行加载器也要等模型下载完才知道对不对。
 

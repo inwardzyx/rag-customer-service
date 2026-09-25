@@ -72,8 +72,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: 跑把关 + 评测门禁
+      - name: 跑把关 + 评测门禁 + 模型故障守门
         # 质量门是【零容忍】的：离线层不调 LLM，结果是确定性的，
         # 数字一变就是真的变了（Recall / 漏答率的断言见 tests/test_eval_set.py）。
         # 环境性失败（装不上、下不动模型）应当改版本，永远不要用 skip 掩盖。
-        run: python -m pytest tests/test_guard.py tests/test_eval_set.py -v
+        #
+        # ★ 2026-09-25 补上 tests/test_llm_resilience.py：之前只跑了前两个文件，
+        #   那 5 条「超时 / 返回垃圾 / 幻觉 id / 超长输入」的守门测试【在 CI 里根本没跑】——
+        #   同样是"测试写了但没人跑"的摆设。已验证它们不依赖 DEEPSEEK_API_KEY，
+        #   能在干净的 CI 环境里跑（删掉 key 实测 5 passed）。
+        run: python -m pytest tests/test_guard.py tests/test_eval_set.py tests/test_llm_resilience.py -v
