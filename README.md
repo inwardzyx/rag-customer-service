@@ -21,6 +21,12 @@
 ## 30 秒跑起来
 
 ```bash
+# ⚠️ 先说一句：下面所有 python/pip 都请换成【你的虚拟环境里的完整路径】，
+#    例如 D:\Python-project\.venv\Scripts\python.exe
+#    别裸敲 python —— 这台机器上 User PATH 里排着 conda base 和 Python 3.8，
+#    裸敲命中的不是装了依赖的那个环境，会报 ModuleNotFoundError。
+#    嫌长就先执行一句：$PY = "D:\Python-project\.venv\Scripts\python.exe"，后面用 & $PY 代替。
+
 # 1. 装依赖
 pip install -r requirements.txt
 
@@ -40,7 +46,28 @@ python -m pytest tests/ -v
 python service.py
 ```
 
-打开 <http://127.0.0.1:8000> 是聊天页面，<http://127.0.0.1:8000/docs> 是自动生成的接口文档。
+启动大概 3~4 秒（加载 embedding 模型 + 建库，只在启动时做一次）。
+终端最后出现这两行就说明起来了：
+
+```
+就绪：68 块入库，拦下 15 块，耗时 3.6 秒
+Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+打开 <http://127.0.0.1:8000> 是聊天页面，<http://127.0.0.1:8000/docs> 是自动生成的接口文档，
+<http://127.0.0.1:8000/health> 返回 `{"status":"ok","chunks":68,"rejected":15}`。
+
+**按 `Ctrl+C` 停止**（不是关掉窗口就行——关窗口也能停，但 Ctrl+C 更干净）。
+
+> 只验证"起没起来"不想开浏览器的话，另开一个终端敲：
+> `curl http://127.0.0.1:8000/health`
+>
+> 常见问题：
+> - **没配 `DEEPSEEK_API_KEY` 也能启动**，但提问会返回"已找到相关资料，但模型调用失败"
+>   （检索/把关都不需要 key，只有最后一步生成答案需要）。
+> - **端口 8000 被占用**：改 `service.py` 末尾的 `port=8000`，或先找到占用进程停掉。
+> - **第一次跑要下载 embedding 模型**（约 100MB），之后走缓存；国内建议带上
+>   `HF_ENDPOINT=https://hf-mirror.com`（源码里已用 `setdefault` 设成镜像，设环境变量可覆盖）。
 
 ---
 
