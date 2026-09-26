@@ -248,6 +248,8 @@ python scripts/measure_chunk_health.py
 【规模】      文档 3 篇 · 块 83 条 · 解析失败 0
 【长度分布】  最短 4   中位 59   p90 242   最长 353
               ≥400（会被截断）0 ✔        <15（当碎屑拦）15
+【切多块判据】 判定：不动 —— 没有被截断的块
+              （主判据 单块丢字 ≥100 → 当天上 ｜ 次判据 被截断块 ≥3 → 该上）
 【脏数据】    页脚残留 0 ✔    空块 0 ✔    含 \r 的块 0（提示项，不计入结论）
 【结构】      块内行首 ## 残留 0 ✔
 【元数据】    version 非 YYYY-MM-DD 0 ✔    同文档内 clause 重名 0 ✔
@@ -258,9 +260,13 @@ python scripts/measure_chunk_health.py
 结构漏切 / 日期格式 / 身份键）—— 这才是这份体检的意义：它不是"随便检查了几项"，
 而是**历史上每个踩过的坑都留下了一个探头**。
 
-> ★ 判据意识：`≥400 被截断 = 0` 这条不只是"数字好看"，它同时是**上"切多块"的触发条件**。
-> 哪天往 `docs/` 里扔进一篇真长条款把这里顶成 1，就该上切多块了 ——
-> 而不是继续让它静默丢字。有数字的阈值才能叫触发条件，"以后再说"不能。
+> ★ 判据意识：要不要上"切多块"，判据**不是**"块长到 400 了吗"，而是
+> **"这一刀丢了多少字"**（`≥400 被截断 = 0` 只是它的表象）。
+> 顶到 400 的块被切掉 1 个字不值得为它写切分器；丢 1 字和丢 200 字才不是一回事。
+> 所以三条判据写成了一处**纯函数** `scripts/measure_chunk_health.py::grade_truncation`，
+> 分四档（不动 / 记账 / 该上 / 当天上），并由 `tests/test_loader.py::test_split_trigger_grading`
+> 用**合成输入**走遍每一档 —— 拿真实语料测就是"遍历空集合"，那是空断言。
+> 判据只此一处；loader 里那处截断只负责**报出丢了多少字**，不重复定义判据。
 
 **为什么还要有【清洗账】这一节**：上面那些全是**终态快照**，只问"现在的块长什么样"，
 看不见"加载时动了几刀"。而剥离页脚 / 截断 / 丢导语这三刀都会**永久改内容** ——
@@ -302,9 +308,18 @@ python scripts/measure_chunk_health.py
 > 唯一用途是持续证明"把关在真实数据上真的在拦"）。标本永远不会通过审核、也不该通过，
 > 所以"inbox 里还有文件"**不等于审核积压**。文件、数字、测试一处都没动，只把这句说清楚。
 
-> 测试 54 → **56** 条（`test_guard` 24 → 25、`test_loader` 20 → 21）。
+> 测试 54 → **57** 条（`test_guard` 24 → 25、`test_loader` 20 → 22）。
 > 入库 68 / 15、Recall@5 13/14、清洗账 2 块 563 字 **全部不变** ——
 > 这一轮修的是**工具和文档的可信度**，一个字节的知识库内容都没改。
+
+**顺手把「什么时候该上切多块」从一句口头约定变成了可测判据。**
+原来 README 里写的是"超长块顶成 1 就该上"—— 那是**快照**，判不出轻重：丢 1 字和丢 200 字
+在这句话里一样大。现在三条判据落在 `measure_chunk_health.py::grade_truncation`（纯函数，
+四档：不动 / 记账 / 该上 / 当天上），主判据看**单块丢字量**（≥100），次判据看**被截断块数**
+（≥3，说明粒度从"按条"变成了"按章"），反向判据钉住"<400 的块一个都不许切"。
+体检脚本新增【切多块判据】小节直接报定级结果，这条测试用**合成输入**走遍四档
+（真实语料 0 块被截断，拿它测就是遍历空集合 = 空断言）。变异测试同步加了第 7 条
+—— 「次判据被顺手删掉」→ 3 块被截断却只说"记账"，动作线永远不触发，**必须变红**。
 
 ---
 
@@ -407,7 +422,7 @@ python -m pytest tests/ -q
 ```
 
 **上面这些是手工演示。2026-09-25 把它们做成了可复现的工具** —— `scripts/mutate_check.py`，
-现在覆盖 6 个变异（含上面 5 个之外的数据层那几个）：
+现在覆盖 7 个变异（含上面 5 个之外的数据层那几个）：
 
 ```bash
 python scripts/mutate_check.py            # 跑全部，约 10 秒（只有第 1 条要加载模型）
@@ -533,10 +548,10 @@ rag-customer-service/
 │   ├── measure_chunk_health.py       # 数据层体检：块健不健康（秒级，不加载模型）
 │   ├── measure_dup_distribution.py   # 83 块两两全量算余弦（3403 对）
 │   ├── measure_dup_threshold.py      # 真重复/同义改写/不同条款 三类配对各是多少
-│   └── mutate_check.py               # 变异测试：故意改坏代码，看测试红不红（6 条）
-└── tests/                       # 共 56 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
+│   └── mutate_check.py               # 变异测试：故意改坏代码，看测试红不红（7 条）
+└── tests/                       # 共 57 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
     ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（25 条）
-    ├── test_loader.py           # kb/loader 解析单测（21 条，不碰模型 → CI 快 job 跑它）
+    ├── test_loader.py           # kb/loader 解析单测（22 条，不碰模型 → CI 快 job 跑它）
     ├── test_eval_set.py         # 评测集自洽 + 离线质量门禁（5 条）
     ├── test_llm_resilience.py   # 模型故障守门：超时 / 返回垃圾 / 幻觉 id / 超长输入（5 条）
     └── fixtures/dirty_inbox/    # 构造的脏数据，一个文件对应一道关（覆盖度用，见「入库把关」）
@@ -599,14 +614,14 @@ python evalset/run_eval.py --with-llm  # 在线层：走 rerank（需 DEEPSEEK_A
 
 | job | 装什么 | 跑什么 | 实测耗时 |
 |---|---|---|---|
-| **fast** | 只装 `pytest` | `tests/test_loader.py`（21 条） | **1.3 秒** |
+| **fast** | 只装 `pytest` | `tests/test_loader.py`（22 条） | **1.3 秒** |
 | **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py` + `test_llm_resilience.py`（35 条） | 15 秒起（首次还要下模型） |
 
-> 两个 job 加起来 **覆盖全部 56 条**（21 + 35），不存在「只在本地跑过」的测试。
+> 两个 job 加起来 **覆盖全部 57 条**（22 + 35），不存在「只在本地跑过」的测试。
 
 **为什么拆**：两类测试成本差约 500 倍（实测 0.03s vs 15s）。合成一个 job 的话，改一行加载器也要等模型下载完才知道对不对。
 
-**fast job 为什么敢只装 pytest**：`kb/loader.py` 只 import `re`、`pathlib` 和 `logging`（都是标准库）。这不是"我觉得"，是验过的 —— 拿一个**没装 fastembed / onnxruntime / jieba** 的解释器去 import 它，连带加载的第三方模块为**零**；再用只装了 pytest 的隔离环境跑，21 条全绿。对照实验：同一个"穷"解释器跑 `test_guard.py` 会直接 `ModuleNotFoundError: No module named 'dotenv'` —— 反过来证明慢 job 确实必须装全套。
+**fast job 为什么敢只装 pytest**：`kb/loader.py` 只 import `re`、`pathlib` 和 `logging`（都是标准库）。这不是"我觉得"，是验过的 —— 拿一个**没装 fastembed / onnxruntime / jieba** 的解释器去 import 它，连带加载的第三方模块为**零**；再用只装了 pytest 的隔离环境跑，22 条全绿。对照实验：同一个"穷"解释器跑 `test_guard.py` 会直接 `ModuleNotFoundError: No module named 'dotenv'` —— 反过来证明慢 job 确实必须装全套。
 
 **两个真坑**：
 - `HF_ENDPOINT` 必须覆盖成 `https://huggingface.co`：`service.py` 用 `os.environ.setdefault` 把默认值设成国内镜像 `hf-mirror.com`，而 GitHub 的 runner 在海外，走国内镜像大概率慢或超时。正因为源码用的是 `setdefault`，设个环境变量即可覆盖 —— **零改代码**。

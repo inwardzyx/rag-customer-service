@@ -321,3 +321,52 @@ def test_health_script_max_chars_is_not_drifted():
     real = inspect.signature(load_documents).parameters["max_chars"].default
     assert health.MAX_CHARS_HINT == real, (
         f"体检脚本抄的是 {health.MAX_CHARS_HINT}，loader 真值是 {real} —— 该去改脚本了")
+
+
+# ==================================================================
+# ⑤ 「什么时候该上切多块」—— 三条判据的定级
+# ==================================================================
+def test_split_trigger_grading():
+    """★ 三条判据的四个档位，全部用【合成输入】测。
+
+    ★ 为什么必须喂合成输入，不能拿真实语料测：
+      真实语料现在 **0 块被截断**，拿它测就是"遍历一个空集合里的每个元素并断言" ——
+      **恒真、永远不会红**。这正是这个仓库反复在修的那类哑弹
+      （test_guard 的 PII 断言、只测半边的关卡 5 都栽在这里）。
+      喂合成数据，才能让四个档位各自被真正走一遍。
+
+    ★ 四个档位对应四种动作，不是"有没有超长块"这一个二值判断：
+        不动   —— 压根没被截断
+        记账   —— 有截断但丢字少：切了反而把一条完整条款拆散，不划算
+        该上   —— 单个都不大，但【数量】说明粒度变了（语料从"按条"变成"按章"）
+        当天上 —— 单块丢字 ≥100（原文 ≥500 字），这种丢字会真的伤检索
+
+    ★ 判据的唯一定义处：`scripts/measure_chunk_health.py::grade_truncation`。
+      loader 里那处截断只负责【报出丢了多少字】，不重复定义判据 —— 判据同源。
+    """
+    import scripts.measure_chunk_health as health
+
+    DROP = health.SPLIT_TRIGGER_DROP        # 主判据：单块丢字门槛（100）
+    CNT = health.SPLIT_TRIGGER_COUNT        # 次判据：被截断块数门槛（3）
+    g = health.grade_truncation
+
+    # ① 不动
+    assert g([])[0] == "不动"
+    assert g([0])[0] == "不动", "丢 0 字不该算被截断"
+
+    # ② 记账：丢字都不到门槛，块数也不够
+    assert g([DROP - 1])[0] == "记账", f"丢 {DROP - 1} 字只该记账"
+    assert g([1, 2])[0] == "记账", "两块零头丢字也只该记账"
+
+    # ③ 该上：单个都不大，但数量到了 —— 「差一块就不该上」两侧都钉住
+    assert g([10, 20])[0] == "记账", f"{CNT - 1} 块被截断还不够触发动作线"
+    assert g([10, 20, 30])[0] == "该上", f"{CNT} 块被截断说明粒度变了，该上"
+
+    # ④ 当天上：任一块丢字到门槛，哪怕只有这一块
+    assert g([DROP])[0] == "当天上"
+    assert g([DROP + 50, 1, 1])[0] == "当天上", "数量也超了时应给最重的判定"
+
+    # ⑤ 理由里要能看见"丢了几个字 / 门槛是多少" —— 沉默的定级等于没有定级
+    why = g([DROP])[1]
+    assert str(DROP) in why, f"结论里没写出门槛，看不出来为什么当天上：{why!r}"
+

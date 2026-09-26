@@ -102,6 +102,14 @@ MUTATIONS = [
         "test": "tests/test_loader.py::test_truncation_is_not_silent",
         "why": "模拟最初的病：丢字不报，谁也不知道库里少了几百字",
     },
+    {
+        "name": "切多块次判据消失（粒度变了却只说记账）",
+        "file": "scripts/measure_chunk_health.py",
+        "anchor": "    if len(lost) >= SPLIT_TRIGGER_COUNT:",
+        "mutant": "    if False:  # 变异：删掉次判据",
+        "test": "tests/test_loader.py::test_split_trigger_grading",
+        "why": "模拟「次判据被顺手删掉」—— 3 块以上被截断本说明粒度从条变章，删了就只剩「记账」，动作线永远不触发",
+    },
 ]
 
 

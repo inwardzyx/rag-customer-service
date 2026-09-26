@@ -200,7 +200,11 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
 
             # ★ 超长不再静默截断：丢了多少字要报出来。
             #   为什么现在【不】改成"切成多块"：剥完页脚后全库超长块是 0 个，
-            #   为不存在的需求写切分器是过度设计。真需要时再补，见 README「下一步」。
+            #   为不存在的需求写切分器是过度设计。真需要时再补。
+            #   ★ "什么时候才真的该上切多块"有明确判据，只有一处定义：
+            #     `scripts/measure_chunk_health.py::grade_truncation`
+            #     （主判据 单块丢字 ≥100 → 当天上；次判据 被截断块 ≥3 → 该上；
+            #       反向判据 <400 的块一个都不许切）。别在别处再写一套。
             #   （另：就算这里不截，bge-small-zh 也有 512 token 上限，
             #    会在 embedding 里把尾巴悄悄吃掉 —— 所以截断这道保护不能整个撤掉。）
             if len(content) > max_chars:

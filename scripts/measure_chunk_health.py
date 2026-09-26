@@ -53,6 +53,50 @@ DATE_OK = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 STRAY_HEAD = re.compile(r"(?m)^##")
 
 
+# ==================================================================
+# 什么时候该上「切多块」—— 三条判据（唯一的定义处）
+# ==================================================================
+# ★ 判据不是"块长到 400 了吗"，而是"**这一刀丢了多少字**"。
+#   顶到 400 的块被切掉 1 个字，不值得为它写一个切分器；
+#   真正该触发动作的是丢字量 —— 丢 1 字和丢 200 字不是一回事。
+#
+# ★ 为什么这个判据长在【体检脚本】而不是 loader 里：
+#   判据要读的信号是"加载时每一刀丢了多少字"，那正是清洗账收的东西
+#   （`CLEAN_OP_TRUNCATE` 的 `clean_chars`）。放在这里 = 和生产日志**同一个信号源**，
+#   不重新算一遍（重新算就又是一处"判据和被测对象不同源"）。
+SPLIT_TRIGGER_DROP = 100      # 主判据：任一单块丢字 ≥ 它（原文 ≥ 400+100=500 字）→ 当天上
+SPLIT_TRIGGER_COUNT = 3       # 次判据：被截断的块 ≥ 它 → 该上（是粒度问题，不是单个例外）
+
+
+def grade_truncation(drops):
+    """按三条判据给"要不要上切多块"定级。**纯函数** —— 便于用合成输入单测。
+
+    drops: 每个被截断块的丢字数（生产里来自 `CLEAN_OP_TRUNCATE` 的 clean_chars）。
+    返回 (level, 一句话结论)，level ∈ {不动, 记账, 该上, 当天上}。
+
+    ① **主判据（丢字量）**：任一 `N ≥ SPLIT_TRIGGER_DROP` → **当天就上**。
+       N < 100 → 只记账继续观察：这种丢字对检索影响很小，切了反而把一条完整条款拆散。
+    ② **次判据（粒度变了）**：被截断的块 ≥ `SPLIT_TRIGGER_COUNT` 个 → 该上。
+       三个以上同时超长，说明进来的语料从"按条"变成了"按章" —— 那是粒度问题。
+    ③ **反向判据（写给将来写切分器的人）**：`< max_chars` 的块**一个都不许切**。
+       现在块的边界正好是条款边界，整条在一起；切完可能变成"…按旷课论处"在一块、
+       "并记入学生档案"在另一块 —— 白丢上下文。
+
+    ★ ③ 故意**没有**对应的测试：切分器还不存在，写了就是**空断言**
+      （恒真、永远不会红，正是这个仓库最忌讳的东西）。
+      等切分器真做出来，再在这里补"小块不许被切"的用例。
+    """
+    lost = [d for d in drops if d > 0]
+    if not lost:
+        return "不动", "没有被截断的块"
+    worst = max(lost)
+    if worst >= SPLIT_TRIGGER_DROP:
+        return "当天上", f"有块丢了 {worst} 字（≥{SPLIT_TRIGGER_DROP}，原文 ≥{MAX_CHARS_HINT + SPLIT_TRIGGER_DROP} 字）"
+    if len(lost) >= SPLIT_TRIGGER_COUNT:
+        return "该上", f"被截断的块有 {len(lost)} 个（≥{SPLIT_TRIGGER_COUNT}）—— 粒度变了"
+    return "记账", f"{len(lost)} 块被截断，最多丢 {worst} 字（都不到 {SPLIT_TRIGGER_DROP}）"
+
+
 class _CleanLogCollector(logging.Handler):
     """收集 kb/loader 加载过程中"动过的刀"。
 
@@ -70,14 +114,22 @@ class _CleanLogCollector(logging.Handler):
 
     def __init__(self):
         super().__init__(level=logging.WARNING)
-        self.ops = {}                      # op -> (次数, 总字数)
+        self.ops = {}                      # op -> {"n": 次数, "chars": 总字数, "values": [每个的 clean_chars]}
 
     def emit(self, record):
         op = getattr(record, "clean_op", None)
         if op is None:
             return                         # 不是清洗动作，不记账
-        n, chars = self.ops.get(op, (0, 0))
-        self.ops[op] = (n + 1, chars + getattr(record, "clean_chars", 0))
+        chars = getattr(record, "clean_chars", 0)
+        slot = self.ops.setdefault(op, {"n": 0, "chars": 0, "values": []})
+        slot["n"] += 1
+        slot["chars"] += chars
+        slot["values"].append(chars)       # ★ 保留【每一条】的量，不只是合计 ——
+        #   「要不要上切多块」的判据要看"单块最多丢多少"，合计给不了这个数。
+
+    def values(self, op):
+        """某个动作每一刀的量（列表）。没发生过就返回空列表。"""
+        return list(self.ops.get(op, {}).get("values", []))
 
 
 def pct(values, q):
@@ -132,9 +184,19 @@ def main(argv):
     short = [d for d in docs if len(d["text"]) < MIN_LEN_HINT]
     checks.append(("超长块（≥%d 会被截断丢字）" % MAX_CHARS_HINT, not over, len(over)))
     print("  ≥%d（会被截断）    %d  %s"
-          % (MAX_CHARS_HINT, len(over), "✔ 没有" if not over else "★ 该考虑切多块了"))
+          % (MAX_CHARS_HINT, len(over), "✔ 没有" if not over else "★ 有（看下面的切多块判据）"))
     print("  <%d（当碎屑拦）    %d  （不算问题：把关本来就会拦掉它们）"
           % (MIN_LEN_HINT, len(short)))
+
+    # ---------- 切多块判据 ----------
+    # ★ 这里读的是清洗账里 CLEAN_OP_TRUNCATE 的【每一条】丢字数，
+    #   也就是启动日志里那句「已截断（丢 N 字）」的同一个数 —— 判据同源，不重算。
+    level, why = grade_truncation(collector.values(CLEAN_OP_TRUNCATE))
+    print("\n【切多块判据】看「这一刀丢了多少字」，不是「到 400 了吗」")
+    print("  判定：%s —— %s" % (level, why))
+    print("  主判据 单块丢字 ≥%d → 当天上 ｜ 次判据 被截断块 ≥%d → 该上"
+          % (SPLIT_TRIGGER_DROP, SPLIT_TRIGGER_COUNT))
+    print("  反向判据 <%d 的块一个都不许切（现在块的边界正好是条款边界）" % MAX_CHARS_HINT)
 
     # ---------- 脏数据 ----------
     # ★ 判据必须和 loader 同源：这里以前写的是"全串查找"（any(m in text ...)），
@@ -184,8 +246,8 @@ def main(argv):
     if not collector.ops:
         print("  （没动过刀）")
     for op in (CLEAN_OP_FOOTER, CLEAN_OP_TRUNCATE, CLEAN_OP_PREAMBLE):
-        n, chars = collector.ops.get(op, (0, 0))
-        print("  %s：%d 块，共 %d 字" % (op, n, chars))
+        slot = collector.ops.get(op, {"n": 0, "chars": 0})
+        print("  %s：%d 块，共 %d 字" % (op, slot["n"], slot["chars"]))
     print("  ★ 哪天这里的数字变了，就是清洗规则又被动了 —— 这是全绿快照给不了的信息。")
 
     # ---------- 每个文档 ----------
