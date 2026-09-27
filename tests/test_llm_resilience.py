@@ -19,7 +19,6 @@
 import json
 import os
 import sys
-import time
 
 # 这两行必须在 import 项目模块之前（和 test_guard.py 同样的原因）
 os.environ["LANGSMITH_TRACING"] = "false"
@@ -30,35 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest                                      # noqa: E402
 import service as svc                              # noqa: E402
 
-
-# ---- 测试用的假模型 ----
-class _FakeResp:
-    """假返回：只要有 .content 属性，长得和真模型返回的对象一样"""
-
-    def __init__(self, content):
-        self.content = content
-
-
-class _FakeLLM:
-    """不管问什么都返回指定字符串 —— 用来模拟"模型说了句没用的话" """
-
-    def __init__(self, reply):
-        self.reply = reply
-
-    def invoke(self, messages):
-        return _FakeResp(self.reply)
-
-
-class _SlowLLM:
-    """模拟"模型卡住了"：一直不返回。
-
-    注意 sleep 只有 1 秒（不是 5 秒）—— 超时后那个线程其实还在后台跑完，
-    Python 退出时会等它，所以故意设短一点，免得拖慢整个测试。
-    """
-
-    def invoke(self, messages):
-        time.sleep(1)
-        return _FakeResp("{}")
+# 假模型从 conftest.py 拿 —— 三个测试文件共用一份，不再各抄一遍（见 conftest.py 的说明）
+from conftest import _FakeLLM, _FakeResp, _SlowLLM  # noqa: E402
 
 
 @pytest.fixture(scope="module")

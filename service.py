@@ -150,7 +150,17 @@ _LLM_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm")
 
 
 def _invoke_llm(llm, messages, timeout=None):
-    """调一次大模型，最多等 timeout 秒；超时和报错统一包装成 LLMCallError 抛出。
+    """调一次大模型，最多等 timeout 秒；超时和【调用期】报错统一包装成 LLMCallError。
+
+    ★ 2026-09-27 把"调用期"三个字说清楚（原来只写"报错"，是句假话）：
+      这里 try 包的是 fut.result(...)，也就是【模型已经在跑之后】出的错。
+      而 `llm` 这个实参是在【调用本函数之前】求值的 —— service.py 里两处写法
+      `_invoke_llm(self.llm, ...)` 会先触发 RAG.llm 属性去构造 ChatDeepSeek，
+      构造期抛的错（典型：没配 DEEPSEEK_API_KEY → pydantic ValidationError）
+      【根本进不到这个 try】，会以原始异常一路裸奔出去。
+      ⇒ 这是刻意的，不是遗漏：缺 key 是【配置错误】，应当直接炸出来让人看见，
+        不该被包装成"调用失败"再降级成 200（那正是本仓库在剿的静默失败面）。
+        真正该改的是这句话的措辞，而不是去 catch 它。
 
     为什么要用线程池包这一层？
         llm.invoke() 是同步阻塞的，模型卡住时整个接口会跟着卡死（请求堆积 → 服务不可用）。
@@ -611,8 +621,11 @@ def chat(req: ChatRequest):
             answer="⚠️ 已找到相关资料，但模型调用失败（超时或限流），请稍后重试。",
             sources=sources, took_ms=took(), rerank_used=use_rerank, knowledge_hit=True)
 
-    return ChatResponse(answer=answer, sources=sources,
-                        took_ms=took(), rerank_used=use_rerank)
+    # ★ 2026-09-27：这里【显式】写上 knowledge_hit=True，不再靠上面的默认值。
+    #   之前靠 ChatResponse 的字段默认值躺赢 —— 一旦有人改动那个默认值，
+    #   成功路径的语义会悄悄跟着变，而且看这段代码的人根本看不出来它依赖了默认值。
+    return ChatResponse(answer=answer, sources=sources, took_ms=took(),
+                        rerank_used=use_rerank, knowledge_hit=True)
 
 
 # ==================================================================

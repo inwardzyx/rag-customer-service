@@ -73,8 +73,16 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: 跑把关 + 评测门禁 + 模型故障守门
-        # 质量门是【零容忍】的：离线层不调 LLM，结果是确定性的，
-        # 数字一变就是真的变了（Recall / 漏答率的断言见 tests/test_eval_set.py）。
+      # 质量门是【零容忍】的：慢 job 跑的三个文件全部注入假模型（tests/conftest.py），
+      #   一次都不真调生成模型 ⇒ 结果是确定性的，数字一变就是真的变了
+      #   （Recall / 漏答率的断言见 tests/test_eval_set.py）。
+      # ★ 2026-09-27 改真话：这里原来写的是「离线层不调 LLM，所以结果是确定性的」——
+      #   那是假的。use_rerank=false 关掉的是【精排】那一层，生成答案那一步
+      #   （service.py:605 的 rag.answer()）照样要调模型。
+      #   后果有两面：① 没配 key 的机器上 pytest 必红（test_no_answerable_missed）；
+      #   ② 配了 key 的机器上，14 道应答题每跑一次真烧 14 次调用 ——
+      #      测试变成"要网、要钱、结果还可能不一样"，而这段注释却宣称它是确定性的。
+      #   现在靠注入假模型，①②一起解决，这句话才真正成立。
         # 环境性失败（装不上、下不动模型）应当改版本，永远不要用 skip 掩盖。
         #
         # ★ 2026-09-25 补上 tests/test_llm_resilience.py：之前只跑了前两个文件，

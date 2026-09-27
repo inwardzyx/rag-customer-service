@@ -44,26 +44,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest                                      # noqa: E402
 import service as svc                              # noqa: E402 导入不会启动服务（有 __main__ 保护）
 
-
-# ---- 测试用的"假大模型" ----
-# 为什么要假货？因为真模型要联网、要 API key、每次结果还可能不一样。
-# 测试关心的是"流程对不对"（该拒答时拒答、该命中时命中），不是"模型说了什么"，
-# 所以把模型换成一个人偶，让流程可以脱离网络被反复验证。
-class _FakeResp:
-    """假返回：只需要有 .content 这个属性，和真模型返回的对象长得一样"""
-
-    def __init__(self, content):
-        self.content = content
-
-
-class _FakeLLM:
-    """假模型：不管问什么都返回指定字符串"""
-
-    def __init__(self, reply):
-        self.reply = reply
-
-    def invoke(self, messages):
-        return _FakeResp(self.reply)
+# 假模型从 conftest.py 拿 —— 三个测试文件共用一份，不再各抄一遍（见 conftest.py 的说明）
+from conftest import _FakeLLM                      # noqa: E402
 
 
 @pytest.fixture(scope="module")

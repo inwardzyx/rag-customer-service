@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """评测集的质量门禁 + 数据集自洽测试。
 
-和 test_guard.py 一样，这条路径【不调生成模型】（离线层 use_rerank=false），
-没 DEEPSEEK_API_KEY 也能跑。但要加载 embedding 模型（检索需要）。
+★ 2026-09-27 改真话：以前这里写「这条路径不调生成模型，没 DEEPSEEK_API_KEY 也能跑」——
+  是假的。三条断言里 test_no_answerable_missed / test_clear_refusals_held 会走
+  service.py:605 的 rag.answer()，那里要构造 ChatDeepSeek，没 key 必抛 ValidationError。
+  现在两条都注入了假模型（见下面的注释），所以【现在】这句话才成立：
+    不调【真】生成模型、不需要 DEEPSEEK_API_KEY、结果是确定性的。
+  但仍要加载 embedding 模型（检索需要），所以第一次跑会慢十几秒。
 
 这两层断言的分工：
     test_guard.py   —— 守「机制」：把关拦得对不对、拒答短路径在不在
@@ -22,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest                                      # noqa: E402
 import service as svc                              # noqa: E402
+
+# 假模型从 conftest.py 拿 —— 三个测试文件共用一份，不再各抄一遍（见 conftest.py 的说明）
+from conftest import _FakeLLM                      # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUESTIONS = os.path.join(REPO_ROOT, "evalset", "questions.json")
@@ -91,7 +98,22 @@ def test_recall_at_5_is_full(rag):
 #    ★ 这是「只测拒答准不准」的自证式陷阱的解药：光调严阈值，
 #      拒答准确率会好看，但漏答率会爆。这条守住另一头。
 # ==================================================================
-def test_no_answerable_missed(rag):
+# ==================================================================
+# ★ 2026-09-27 修掉一处「假 docstring」：本文件开头原来写着
+#   「这条路径不调生成模型，没 DEEPSEEK_API_KEY 也能跑」—— 那是假的。
+#   应答题一旦通过向量拒答判定，就会走到 service.py:605 的 rag.answer()，
+#   那里要构造 ChatDeepSeek，没 key 直接抛 pydantic ValidationError。
+#   ⇒ 以前的表现：删掉 key 跑 pytest，test_no_answerable_missed 必红；
+#     而在【有 key 的机器】上，这 14 题每跑一次就真烧 14 次大模型调用 ——
+#     测试变成"要网、要钱、结果还可能不一样"，CI 却宣称"结果是确定性的"。
+#   现在注入假模型，两件事一起解决：既不需要 key，也不再真调。
+#
+# ★ 会不会因此削弱这条测试？不会。被断言的 knowledge_hit 判定发生在
+#   service.py:591-595（最高向量分 vs VEC_REJECT_THRESHOLD），
+#   那一步【在 LLM 调用之前】，纯向量运算，跟模型是不是假货无关。
+# ==================================================================
+def test_no_answerable_missed(rag, monkeypatch):
+    monkeypatch.setattr(svc.rag, "_llm", _FakeLLM("（假模型返回，未真实调用）"))
     missed = []
     for q in _load():
         if q["type"] != "answer":
@@ -104,7 +126,12 @@ def test_no_answerable_missed(rag):
 # ==================================================================
 # ④ 拒答层：4 道清晰拒答题必须拒（2 道边界题允许被误答，只上报不卡）
 # ==================================================================
-def test_clear_refusals_held(rag):
+def test_clear_refusals_held(rag, monkeypatch):
+    # 这条现在走的是 service.py:591 的早退路径、不碰模型，所以不注入也绿。
+    # 但那是【数据侥幸】—— 拒答题恰好都低于阈值而已。哪天有一条过了线，
+    # 它就会掉进 605 行炸出一个不相干的 ValidationError，白白丢掉诊断信息。
+    # 注入之后，将来真出问题时给出的是「清晰拒答题没拒答：[qX]」这种能直接用的断言。
+    monkeypatch.setattr(svc.rag, "_llm", _FakeLLM("（假模型返回，未真实调用）"))
     bad = []
     for q in _load():
         if q["type"] != "refuse" or q.get("boundary"):
