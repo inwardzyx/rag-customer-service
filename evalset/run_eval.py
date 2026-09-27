@@ -37,6 +37,31 @@ import service as svc                                  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+# ---- 离线评测用的人偶模型 ----
+# ★ 2026-09-27：离线层原本宣称"零 API 成本、不需要 key"，那是假的 ——
+#   下面的 knowledge_hit() 走 svc.chat()，应答题一旦过了阈值就会走到 rag.answer()，
+#   那里要构造 ChatDeepSeek，没 key 直接崩（和 CI 那颗哑弹是同一个病）。
+#
+#   而这个脚本要的三个指标，没有一个是靠"生成"得来的：
+#     · Recall@5       直接调 rag.search()
+#     · 漏答率 / 拒答率 只看 knowledge_hit，而它在 service.py:591-595 就定了，
+#                      【在生成之前】
+#   ⇒ 生成这一步对本脚本没有任何用处。注入人偶后数字一个都不会变。
+#
+#   （tests/conftest.py 里另有一套 _FakeLLM，是给 pytest 用的；这里不 import 它 ——
+#    一个 CLI 脚本去依赖 tests 包，方向是反的。）
+class _OfflineResp:
+    """只要有 .content 属性，长得和真模型返回的对象一样"""
+
+    def __init__(self, content):
+        self.content = content
+
+
+class _OfflineLLM:
+    def invoke(self, messages):
+        return _OfflineResp("（离线评测不调用生成模型）")
+
+
 def load_questions():
     with open(QUESTIONS, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -73,6 +98,10 @@ def main():
     logger.info("加载模型 + 建库……")
     svc.rag.startup()
     logger.info(f"入库 {len(svc.rag.chunks)} 块，拦下 {len(svc.rag.rejected)} 块")
+
+    # 离线层不调生成模型（理由见本文件顶部 _OfflineLLM 的注释）
+    if not args.with_llm:
+        svc.rag._llm = _OfflineLLM()
 
     answerable = [q for q in qs if q["type"] == "answer"]
     refuse = [q for q in qs if q["type"] == "refuse"]
