@@ -1,0 +1,21 @@
+{
+  "_说明": [
+    "把这个文件填完交给出题人所在项目的人（填questions 里那三个字段）。",
+    "type 只有两个取值：answer（库里答得出来）/ refuse（库里答不出来）。",
+    "gold 填 [文件名, 条款名]；refuse 题填 null。",
+    "why_forced_to_refuse 只在 refuse 题填，写清'为什么这道题库里答不出来'。",
+    "★ 写不出来就别硬写——一道说清理由的 refuse 题比十道含糊的强。"
+  ],
+  "questions": [
+    {
+      "id": "h1",
+      "type": "answer",
+      "question": "",
+      "gold": [
+        "",
+        ""
+      ],
+      "note": ""
+    }
+  ]
+}

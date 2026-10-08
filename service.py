@@ -475,7 +475,7 @@ class RAG:
 
     def answer(self, question, chunks):
         ctx = "\n".join(f"- {c['text']}" for c in chunks)
-        prompt = ("你是客服助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
+        prompt = ("你是学校学生事务的答疑助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
                   f"资料：\n{ctx}\n\n问题：{question}")
         # 超时 / 限流 / 网络错误都会被 _invoke_llm 统一转成 LLMCallError 抛出来，
         # 不再让异常一路裸奔成 500 —— /chat 会接住它、记日志并降级。
@@ -500,7 +500,14 @@ async def lifespan(app: FastAPI):
     logger.info("服务关闭")
 
 
-app = FastAPI(title="客服知识库问答", lifespan=lifespan)
+app = FastAPI(
+    title="校园政策问答",
+    description=(
+        "RAG 拒答服务：入库把关五道关卡 + BM25/向量混合检索（RRF） + "
+        "大模型精排。精排最高分 < 5 时直接返回，不调用生成模型。"
+    ),
+    lifespan=lifespan,
+)
 
 
 # pydantic 模型：规定"请求体必须长这样"，传错了框架自动返回 422，不用你写判断
@@ -634,7 +641,7 @@ def chat(req: ChatRequest):
 # ==================================================================
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>客服知识库问答</title>
+<title>校园政策问答</title>
 <style>
  body{font-family:system-ui,"Microsoft YaHei",sans-serif;max-width:760px;margin:40px auto;padding:0 20px;line-height:1.7}
  h2{font-weight:500} textarea{width:100%;height:60px;font-size:14px;padding:8px}
@@ -643,9 +650,9 @@ HTML_PAGE = """<!DOCTYPE html>
  .src{font-size:13px;color:#666;border-left:3px solid #ddd;padding-left:10px;margin-top:6px}
  .tag{display:inline-block;font-size:12px;background:#e8f0fe;color:#185FA5;border-radius:4px;padding:1px 6px;margin-right:6px}
 </style></head><body>
-<h2>客服知识库问答（RAG）</h2>
+<h2>校园政策问答（RAG）</h2>
 <p style="color:#666;font-size:14px">bge-small-zh 向量检索 + BM25 混合 + 入库把关 + 大模型精排 + DeepSeek 生成</p>
-<textarea id="q" placeholder="试试：已发货的订单退款要扣多少钱？ / 保修多久？ / 支持分期付款吗？"></textarea><br>
+<textarea id="q" placeholder="试试：学校对学生的处分有哪几种？ / 请假一天以内由谁审批？ / 图书馆几点关门？（最后一条库里没有，看它怎么拒答）"></textarea><br>
 <button onclick="ask()">提问</button>
 <label style="margin-left:12px;font-size:13px"><input type="checkbox" id="rr" checked> 启用 rerank</label>
 <div class="box" id="ans" style="display:none"></div>
