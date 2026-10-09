@@ -20,6 +20,13 @@
 import operator
 from typing import Annotated, TypedDict
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import env_compat                                   # noqa: E402  ★ 必须在 import langchain 之前
+env_compat.ensure_mmh3()                            # noqa: E402  本机 DLL 被策略拦截时的降级方案
+env_compat.ensure_uuid_utils()                      # noqa: E402  同上，拦的是 uuid_utils
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
@@ -42,23 +49,23 @@ sep("101：手动调用工具（上）—— 单个工具，自己写执行节�
 # ==================================================================
 
 @tool
-def get_order_status(order_id: str) -> str:
-    """根据订单号查询订单的当前状态。"""
+def query_leave_record(student_id: str) -> str:
+    """根据学号查询请假记录的当前状态。"""
     #  ↑ 这行 docstring 不是写给人看的，是写给 LLM 看的【说明书】，
     #    LLM 就靠它决定什么时候该调这个工具
-    orders = {"A1001": "已发货，48 小时内到达", "B2002": "待付款"}
-    return orders.get(order_id, f"没找到订单 {order_id}")
+    leave_records = {"2024010101": "事假已批准，销假单已归档", "2024010202": "待销假"}
+    return leave_records.get(student_id, f"没找到该学号的请假记录 {student_id}")
 
 
 def fake_llm_single(state):
     """假 LLM：真实场景里这一步由 bind_tools 过的真 LLM 完成，
-    它看你的问题和工具说明书，决定『我要调 get_order_status，参数 order_id=A1001』。"""
+    它看你的问题和工具说明书，决定『我要调 query_leave_record，参数 student_id=2024010101』。"""
     last = state["messages"][-1]
     if isinstance(last, ToolMessage):      # 已经拿到工具回执了 → 该收尾，不再开工单
-        return {"messages": [AIMessage(content="您的订单 A1001 已发货，48 小时内到达。")]}
+        return {"messages": [AIMessage(content="您的学号 2024010101 事假已批准，销假单已归档。")]}
     return {"messages": [AIMessage(
         content="",
-        tool_calls=[{"name": "get_order_status", "args": {"order_id": "A1001"}, "id": "call_001"}],
+        tool_calls=[{"name": "query_leave_record", "args": {"student_id": "2024010101"}, "id": "call_001"}],
     )]}
 #   ↑ 这三行是 ReAct 循环能停下来的关键：有回执就答，没回执才开工单。
 #     少了它，图会 llm → tools → llm → tools …… 一直转到 recursion_limit 撞墙。
@@ -69,7 +76,7 @@ def manual_tool_node(state):
     last = state["messages"][-1]          # 最后一条消息 = LLM 的"工单"
     results = []
     for tc in last.tool_calls:            # 每张工单：name + args + id
-        fn = {"get_order_status": get_order_status}[tc["name"]]   # 按名字找到函数
+        fn = {"query_leave_record": query_leave_record}[tc["name"]]   # 按名字找到函数
         result = fn.invoke(tc["args"])    # 执行（invoke 传参数字典）
         results.append(ToolMessage(
             content=result,               # 回执内容
@@ -93,7 +100,7 @@ g1.add_conditional_edges("llm", route, {"tools": "tools", END: END})
 g1.add_edge("tools", "llm")               # 回执交给 LLM 看一眼
 app1 = g1.compile()
 
-out = app1.invoke({"messages": [HumanMessage("我的订单 A1001 到哪了？")]})
+out = app1.invoke({"messages": [HumanMessage("我的学号 2024010101 审批到哪一步了？")]})
 for m in out["messages"]:
     print(f"   [{type(m).__name__}] {m.content!r}")
 print("""
@@ -107,10 +114,10 @@ sep("102：手动调用（下）—— 一张工单列表，回执必须逐张�
 def fake_llm_parallel(state):
     """假 LLM 一次开两张工单（真实 LLM 也经常这样并行调多个工具）"""
     if isinstance(state["messages"][-1], ToolMessage):
-        return {"messages": [AIMessage(content="A1001 已发货；X9999 查无此订单。")]}
+        return {"messages": [AIMessage(content="2024010101 事假已批准；2024099999 查无此记录。")]}
     return {"messages": [AIMessage(content="", tool_calls=[
-        {"name": "get_order_status", "args": {"order_id": "A1001"}, "id": "call_a"},
-        {"name": "get_order_status", "args": {"order_id": "X9999"}, "id": "call_b"},
+        {"name": "query_leave_record", "args": {"student_id": "2024010101"}, "id": "call_a"},
+        {"name": "query_leave_record", "args": {"student_id": "2024099999"}, "id": "call_b"},
     ])]}
 
 g2 = StateGraph(State)
@@ -121,7 +128,7 @@ g2.add_conditional_edges("llm", route, {"tools": "tools", END: END})
 g2.add_edge("tools", "llm")
 app2 = g2.compile()
 
-out = app2.invoke({"messages": [HumanMessage("帮我查 A1001 和 X9999 两个订单")]})
+out = app2.invoke({"messages": [HumanMessage("帮我查 2024010101 和 2024099999 两条记录")]})
 print("   工具节点产出的回执：")
 for m in out["messages"]:
     if isinstance(m, ToolMessage):
@@ -136,13 +143,13 @@ sep("103：ToolNode 替代手动 —— 两个内置件替代 101 的全部手�
 
 g3 = StateGraph(State)
 g3.add_node("llm", fake_llm_single)
-g3.add_node("tools", ToolNode([get_order_status]))   # ← 手写工具节点没了
+g3.add_node("tools", ToolNode([query_leave_record]))   # ← 手写工具节点没了
 g3.add_edge(START, "llm")
 g3.add_conditional_edges("llm", tools_condition)     # ← 手写条件边也没了
 g3.add_edge("tools", "llm")
 app3 = g3.compile()
 
-out = app3.invoke({"messages": [HumanMessage("查一下 A1001")]})
+out = app3.invoke({"messages": [HumanMessage("查一下 2024010101")]})
 print("   tools_condition 判定结果：", tools_condition({"messages": out["messages"][-3:]}))
 print("   最后两条消息：")
 for m in out["messages"][-2:]:
@@ -159,22 +166,22 @@ sep("104：ToolRuntime —— 工具函数里直接拿到图的 state 和 tool_c
 # ==================================================================
 
 @tool
-def check_permission(order_id: str, runtime: ToolRuntime) -> str:
-    """查询订单，同时校验当前用户是否有权查看。"""
+def check_permission(student_id: str, runtime: ToolRuntime) -> str:
+    """查询请假记录，同时校验当前用户是否有权查看。"""
     user = runtime.state.get("user_id", "未知用户")   # ← 从图 state 里拿当前用户
     if user != "inward":
-        return f"拒绝：{user} 无权查看订单 {order_id}"
-    orders = {"A1001": "已发货", "B2002": "待付款"}
-    return f"{user} 查询订单 {order_id}（本次调用 id={runtime.tool_call_id[:8]}…）：{orders.get(order_id, '不存在')}"
+        return f"拒绝：{user} 无权查看请假记录 {student_id}"
+    leave_records = {"2024010101": "已批准", "2024010202": "待销假"}
+    return f"{user} 查询请假记录 {student_id}（本次调用 id={runtime.tool_call_id[:8]}…）：{leave_records.get(student_id, '不存在')}"
 #   ↑ 参数名叫 runtime、类型标 ToolRuntime，框架就自动注入，不需要 Annotated、
-#     也不会把它当成要 LLM 填的参数 —— LLM 只负责填 order_id。
+#     也不会把它当成要 LLM 填的参数 —— LLM 只负责填 student_id。
 
 
 def fake_llm_for_runtime(state):
     if isinstance(state["messages"][-1], ToolMessage):
-        return {"messages": [AIMessage(content="好的，以上是您订单的情况。")]}
+        return {"messages": [AIMessage(content="好的，以上是该学号的请假记录。")]}
     return {"messages": [AIMessage(content="", tool_calls=[
-        {"name": "check_permission", "args": {"order_id": "A1001"}, "id": "call_r1"},
+        {"name": "check_permission", "args": {"student_id": "2024010101"}, "id": "call_r1"},
     ])]}
 
 class State2(TypedDict):
@@ -189,7 +196,7 @@ g4.add_conditional_edges("llm", tools_condition)
 g4.add_edge("tools", "llm")
 app4 = g4.compile()
 
-out = app4.invoke({"messages": [HumanMessage("查查 A1001")], "user_id": "inward"})
+out = app4.invoke({"messages": [HumanMessage("查查 2024010101")], "user_id": "inward"})
 for m in out["messages"]:
     if isinstance(m, ToolMessage):
         print("   回执：", m.content)

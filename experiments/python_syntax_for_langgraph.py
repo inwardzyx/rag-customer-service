@@ -935,28 +935,28 @@ print("=" * 62)
 
 # 出处（langgraph_toolnode_demo.py 101 集手写工具节点）：
 #     for tc in last.tool_calls:
-#         fn = {"get_order_status": get_order_status}[tc["name"]]
+#         fn = {"query_leave_record": query_leave_record}[tc["name"]]
 #         result = fn.invoke(tc["args"])
 
 print("画面：车间门口有张【值班表】，左边写工人名字，右边站着工人本人。")
 print("老板开的工单上只写了名字，你得先查表找到人，再把活儿派给他。")
 
 # ① 两个普通函数 —— 就是"工人"
-def get_order_status(order_id):
-    return f"订单 {order_id}：已发货"
+def query_leave_record(student_id):
+    return f"学号 {student_id}：事假已批准"
 
 def get_weather(city):
     return f"{city}：晴，28 度"
 
 # ② 值班表：字典的【值】可以是函数
-#    注意是 get_order_status 不是 get_order_status() —— 不加括号 = 把人请来站着，
+#    注意是 query_leave_record 不是 query_leave_record() —— 不加括号 = 把人请来站着，
 #    加括号 = 当场让他干活（那存的就是干完的结果了）
-roster = {"get_order_status": get_order_status, "get_weather": get_weather}
+roster = {"query_leave_record": query_leave_record, "get_weather": get_weather}
 print("\n① 值班表里存的是什么：", roster)
 print("   值那一列是 <function ...> —— 函数本身是可以被当成一个值传来传去的")
 
 # ③ tc 是什么？一个字典（工单），里面有三样东西
-tc = {"name": "get_order_status", "args": {"order_id": "A1001"}, "id": "call_001"}
+tc = {"name": "query_leave_record", "args": {"student_id": "2024010101"}, "id": "call_001"}
 print("\n② tc（工单）是个字典：", tc)
 print("   tc['name'] =", tc["name"], " ← 要找哪个工人")
 print("   tc['args'] =", tc["args"], " ← 交给他的一组参数，本身又是个字典")
@@ -967,7 +967,7 @@ print("\n③ 拆开写是这样：")
 print("   roster            =", roster)
 print("   tc['name']        =", tc["name"])
 print("   roster[tc['name']]=", fn, " ← 查表，查出来的是个函数")
-print("   原写法 {'get_order_status': get_order_status}[tc['name']] "
+print("   原写法 {'query_leave_record': query_leave_record}[tc['name']] "
       "只是把上面两步并成一行：现造一张表，立刻查一次")
 
 # ⑤ fn.invoke(tc['args']) —— invoke 是工具对象身上的方法，收一个字典
@@ -977,22 +977,22 @@ class FakeTool:                      # 模拟 @tool 造出来的东西（真工�
     def invoke(self, args: dict):    # args 是一个字典
         return self.func(**args)     # ** 把字典摊开成关键字参数
 
-tool_obj = FakeTool(get_order_status)
+tool_obj = FakeTool(query_leave_record)
 print("\n④ fn.invoke(tc['args']) 在干什么：")
 print("   tc['args']        =", tc["args"])
 print("   fn.invoke(那个字典) =", tool_obj.invoke(tc["args"]))
-print("   内部其实等价于：get_order_status(order_id='A1001')")
-print("   —— **args 这个语法就是把字典 {'order_id': 'A1001'} 摊成 order_id='A1001'")
+print("   内部其实等价于：query_leave_record(student_id='2024010101')")
+print("   —— **args 这个语法就是把字典 {'student_id': '2024010101'} 摊成 student_id='2024010101'")
 
 print("\n⑤ 零简写版（把那两行还原成最啰嗦但最好懂的样子）：")
 name = tc["name"]                    # 先看工单上写的名字
-if name == "get_order_status":
-    worker = get_order_status
+if name == "query_leave_record":
+    worker = query_leave_record
 elif name == "get_weather":
     worker = get_weather
 arg_dict = tc["args"]                # 再看工单上写的参数
-if name == "get_order_status":
-    result = worker(order_id=arg_dict["order_id"])
+if name == "query_leave_record":
+    result = worker(student_id=arg_dict["student_id"])
 print("   结果：", result)
 print("   对比原版两行：字典查表 替代了 if/elif，invoke(字典) 替代了手写参数")
 
@@ -1013,10 +1013,10 @@ print("第 22 组：括号套括号怎么读 —— 从里往外剥")
 print("=" * 62)
 # =========================================================
 
-# 出处：g.add_node("tools", ToolNode([get_order_status]))
+# 出处：g.add_node("tools", ToolNode([query_leave_record]))
 
 print("画面：套娃。每一层括号都是一次『动作』，读法永远是【从最里面往外】。")
-print("    g.add_node(\"tools\", ToolNode([get_order_status]))")
+print("    g.add_node(\"tools\", ToolNode([query_leave_record]))")
 print("                                    └── ① 方括号 = 装筐")
 print("                        └───────────── ② 圆括号 = 造节点")
 print("     └──────────────────────────────── ③ 圆括号 = 挂到图上")
@@ -1028,14 +1028,14 @@ def tool_node(tools_list):
 def add_node(name, node):
     return f"图上多了一个节点：{name} = {node}"
 
-def get_order_status(order_id):
-    return f"订单 {order_id} 已发货"
+def query_leave_record(student_id):
+    return f"学号 {student_id} 事假已批准"
 
 print("\n① 最里面：方括号 [ ] = 一个列表（装东西的筐）")
-basket = [get_order_status]
-print("   [get_order_status] =", basket)
+basket = [query_leave_record]
+print("   [query_leave_record] =", basket)
 print("   筐里只有 1 个，但【筐】这个形式不能省 —— 因为可能有多个：")
-print("   [get_order_status, get_weather, get_user]  ← 三个工具也是同一个写法")
+print("   [query_leave_record, get_weather, get_user]  ← 三个工具也是同一个写法")
 
 print("\n② 往外一层：圆括号 ( ) = 调用/构造")
 node = tool_node(basket)
@@ -1045,14 +1045,14 @@ print("\n③ 最外面：圆括号 ( ) = 调用方法")
 print("   add_node('tools', 那个节点) =", add_node("tools", node))
 
 print("\n④ 原版一行 = 上面三步压缩；拆成三行是这样：")
-basket = [get_order_status]           # 装筐
+basket = [query_leave_record]           # 装筐
 node = tool_node(basket)              # 造节点
 add_node("tools", node)               # 挂上去
 print("   三行还是一行，效果完全一样 —— 一行只是懒得给中间产物起名字")
 
 print("\n⑤ 为什么要列表？（实测，langgraph 1.2.11）")
-print("   ToolNode([get_order_status])  → 正常，内部 1 个工具")
-print("   ToolNode(get_order_status)    → ValueError: The first argument must be")
+print("   ToolNode([query_leave_record])  → 正常，内部 1 个工具")
+print("   ToolNode(query_leave_record)    → ValueError: The first argument must be")
 print("                                   a string or a callable with a __name__ ...")
 print("   ⚠ 所以：哪怕只有一个工具，那对中括号也不能省 —— 换个角度想，")
 print("     列表的意思是『这是一批工具』，函数本身的意思是『这是一个工具』，类型不一样")
@@ -1159,7 +1159,7 @@ print("\n1) Path 对象用【斜杠 /】拼路径，不用字符串加法")
 print("   base =", base)
 print("   → 好处：Windows 的反斜杠不用转义，Mac/Linux 上也能跑")
 
-p = base / "退款政策.md"
+p = base / "学生请销假制度.md"
 print("\n2) 常用属性（都是属性，不是方法，【不加括号】）")
 print("   p.name   =", p.name)          # 文件名
 print("   p.parent =", p.parent)        # 所在目录

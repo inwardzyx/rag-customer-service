@@ -6,23 +6,32 @@ Step 2：拆开 tools_condition 这个黑盒 + 给模型【两个工具】让它
     set LANGSMITH_TRACING=false
     python step2_two_tools_choice.py
 """
+import os
+import sys
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
-from dotenv import load_dotenv
+# ★ 这两行必须在 import langchain_* 之前 —— 本机应用控制策略拦掉了 uuid_utils 的
+#   DLL，langchain_core 导入 callbacks 时就会 import 它。不加会直接 ImportError。
+#   （主服务 service.py 里是同样的顺序，理由见那里的注释）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import env_compat                                   # noqa: E402
+env_compat.ensure_uuid_utils()                      # noqa: E402
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.tools import tool                                   # noqa: E402
+from dotenv import load_dotenv                                          # noqa: E402
 load_dotenv()
-from langchain_deepseek import ChatDeepSeek
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
+from langchain_deepseek import ChatDeepSeek                              # noqa: E402
+from langgraph.graph import END, START, StateGraph                      # noqa: E402
+from langgraph.graph.message import add_messages                       # noqa: E402
+from langgraph.prebuilt import ToolNode                                 # noqa: E402
 
 
 # ==================== ① 两个工人（工具） ====================
 @tool
-def get_order_status(order_id: str) -> str:
-    """根据订单号查询物流状态。用户问订单到哪了、发没发货时用这个。"""
-    return f"订单 {order_id}：已发货，48 小时内到达。"
+def query_leave_record(student_id: str) -> str:
+    """根据学号查询请假记录与审批状态。用户问请假、销假、审批进度时用这个。"""
+    return f"学号 {student_id}：事假申请已批准，销假单已归档。"
 
 
 @tool
@@ -31,7 +40,7 @@ def get_weather(city: str) -> str:
     return f"{city}：晴，26 度。"
 
 
-TOOLS = [get_order_status, get_weather]      # 装筐（第 22 组）
+TOOLS = [query_leave_record, get_weather]      # 装筐（第 22 组）
 
 
 # ==================== ② State ====================
@@ -110,20 +119,20 @@ run("你好，用一句话介绍你自己。")
 # ==================== 实验 2：两个工具，它选哪个 ====================
 print("\n" + "=" * 62)
 print("实验 2：同一张图、两个工具，模型自己选")
-run("帮我查一下订单 A1001 到哪了。")
+run("帮我查一下学号 2024010101 的请假记录。")
 run("广州今天天气怎么样？")
 
 
 # ==================== 实验 3：一句话要两个工具（并行） ====================
 print("\n" + "=" * 62)
 print("实验 3：一句话里两件事 —— 看它能不能一次开两张工单")
-run("帮我查订单 A1001，顺便告诉我广州天气。")
+run("帮我查学号 2024010101 的请假记录，顺便告诉我广州天气。")
 
 
 # ==================== 实验 4：参数缺失时它会怎么办（真实可靠性问题） ====================
 print("\n" + "=" * 62)
-print("实验 4：用户没给订单号 —— 模型会开口问，还是自己编一个？")
-run("帮我查一下我上次买的那个订单到哪了。")
+print("实验 4：用户没给学号 —— 模型会开口问，还是自己编一个？")
+run("帮我查一下我上次请假的记录。")
 
 
 print("\n" + "=" * 62)

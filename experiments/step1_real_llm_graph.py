@@ -10,20 +10,30 @@ Step 1：把 fake_llm 换成【真模型】，其他部分和 101-103 集的 dem
     set LANGSMITH_TRACING=false
     python step1_real_llm_graph.py
 """
+import os
+import sys
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+# ★ 下面这三行必须在 import langchain_* 之前 —— 本机应用控制策略拦掉了
+#   uuid_utils 的 DLL，而 langchain_core 在导入 callbacks 时就会去import 它。
+#   不加这两行，本脚本在这台机器上会直接 ImportError 起不来。
+#   （主服务 service.py 里也是同样的顺序，理由见那里的注释）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import env_compat                                   # noqa: E402
+env_compat.ensure_uuid_utils()                      # noqa: E402
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.tools import tool                                   # noqa: E402
+from langgraph.graph import END, START, StateGraph                      # noqa: E402
+from langgraph.graph.message import add_messages                       # noqa: E402
+from langgraph.prebuilt import ToolNode, tools_condition               # noqa: E402
 
 
 # ============ ① 工人：和 101 集一模一样 ============
 @tool
-def get_order_status(order_id: str) -> str:
-    """根据订单号查询物流状态。"""
-    return f"订单 {order_id}：已发货，48 小时内到达。"
+def query_leave_record(student_id: str) -> str:
+    """根据学号查询请假记录与审批状态。"""
+    return f"学号 {student_id}：事假申请已批准，销假单已归档。"
 
 
 # ============ ② State：和以前一模一样 ============
@@ -41,7 +51,7 @@ llm = ChatDeepSeek(model="deepseek-chat", temperature=0)
 #      它自动读环境变量 DEEPSEEK_API_KEY（你机器上已设好，不用传）
 #      temperature=0 = 让模型回答尽量稳定，方便我们做实验
 
-llm_with_tools = llm.bind_tools([get_order_status])
+llm_with_tools = llm.bind_tools([query_leave_record])
 #    └ bind_tools 是 llm 身上的【方法】（有括号才执行）
 #      作用：把"工具说明书"塞给模型，返回一个【新的】会开工单的 llm
 #      注意：原 llm 没被改动 —— 这叫"返回新对象"，不是原地修改
@@ -55,7 +65,7 @@ def chat(state):
 # ============ ④ 搭图：和 103 集一模一样 ============
 g = StateGraph(State)
 g.add_node("chat", chat)                            # 老板
-g.add_node("tools", ToolNode([get_order_status]))   # 工人（装筐，第 22 组）
+g.add_node("tools", ToolNode([query_leave_record]))   # 工人（装筐，第 22 组）
 g.add_edge(START, "chat")
 g.add_conditional_edges("chat", tools_condition)    # 有工单 → tools；没有 → END
 g.add_edge("tools", "chat")                         # 回执交回老板
@@ -65,8 +75,8 @@ app = g.compile()
 
 # ============ ⑤ 实验：两条问题，一条不该调工具，一条该调 ============
 QUESTIONS = [
-    "你好，用一句话介绍你自己。",        # 不需要查订单 → 模型应该【不开工单】
-    "帮我查一下订单 A1001 到哪了。",     # 需要查订单 → 模型应该【开工单】
+    "你好，用一句话介绍你自己。",        # 不需要查记录 → 模型应该【不开工单】
+    "帮我查一下学号 2024010101 的请假记录。",  # 需要查记录 → 模型应该【开工单】
 ]
 
 for q in QUESTIONS:

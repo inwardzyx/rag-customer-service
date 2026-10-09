@@ -46,6 +46,13 @@ import uvicorn                                      # noqa: E402
 from fastapi import FastAPI                         # noqa: E402
 from fastapi.responses import HTMLResponse          # noqa: E402
 from fastembed import TextEmbedding                 # noqa: E402
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import env_compat                                   # noqa: E402  ★ 必须在 import langchain 之前
+env_compat.ensure_mmh3()                            # noqa: E402  本机 DLL 被策略拦截时的降级方案
+env_compat.ensure_uuid_utils()                      # noqa: E402  同上，拦的是 uuid_utils
+
 from langchain_core.messages import HumanMessage    # noqa: E402
 from langchain_deepseek import ChatDeepSeek         # noqa: E402
 from pydantic import BaseModel, Field               # noqa: E402
@@ -54,27 +61,27 @@ from pydantic import BaseModel, Field               # noqa: E402
 # ① 知识库 + 入库把关（和 Step 5 完全一样的逻辑，这里精简成一份）
 # ==================================================================
 RAW_DOCS = [
-    dict(doc="退款政策.md", clause="退款-已发货", version="2026-03-01", source="官网帮助中心",
-         text="已发货的订单申请退款，需扣除 10 元运费，其余金额在 1 到 3 个工作日内原路退回。"),
-    dict(doc="退款政策.md", clause="退款-未发货", version="2026-03-01", source="官网帮助中心",
-         text="未发货订单可全额退款，不扣任何费用，审核通过后 24 小时内到账。"),
-    dict(doc="发货时效.md", clause="现货发货", version="2026-02-10", source="官网帮助中心",
-         text="现货商品在付款后 48 小时内发出，预售商品以商品页面标注的发货时间为准。"),
-    dict(doc="发票与保修.md", clause="保修范围", version="2026-01-20", source="官网帮助中心",
-         text="商品享受一年整机保修，保修期自签收次日开始计算，人为损坏不在保修范围内。"),
-    dict(doc="会员等级与权益.md", clause="升级规则", version="2026-02-01", source="官网帮助中心",
-         text="普通会员累计消费满 1000 元自动升级为 VIP 会员，等级在达到条件的次日生效。"),
-    dict(doc="跨境订单税费.md", clause="税费缴纳", version="2026-01-05", source="官网帮助中心",
-         text="跨境订单需缴纳进口税，税费在清关时由承运商代收，具体金额以海关核定为准。"),
-    dict(doc="物流查询与异常.md", clause="单号查询", version="2026-02-20", source="官网帮助中心",
-         text="物流单号在发货后 24 小时内可查，超过 72 小时未更新可联系客服发起查件。"),
+    dict(doc="学生请销假制度.md", clause="请假-事假", version="2026-03-01", source="学生手册",
+         text="事假须由家长与班主任联系并说明情况后，由班主任登记在册并视情况审核，事假一般不得超过两周。"),
+    dict(doc="学生请销假制度.md", clause="请假-病假", version="2026-03-01", source="学生手册",
+         text="病假须提供校医院或二级以上医院的诊断证明，经班主任审核后报院系批准，证明材料由班主任留存。"),
+    dict(doc="请假审批流程.md", clause="审批权限", version="2026-02-10", source="教务处",
+         text="请假一日以内由班主任审批，超过三日须院系负责人批准，并同时通知家长确认情况。"),
+    dict(doc="违纪处分种类.md", clause="处分种类", version="2026-01-20", source="学生手册",
+         text="处分种类由轻到重依次为警告、严重警告、记过、留校察看、开除学籍，处分前学生有权陈述和申辩。"),
+    dict(doc="学籍异动与休学.md", clause="休学期限", version="2026-02-01", source="教务处",
+         text="休学期限一般为一年，期满可申请续休，累计休学不超过两年，保留学籍期间不参加课程考核。"),
+    dict(doc="校园事务办理指南.md", clause="办理时间", version="2026-01-05", source="学生事务办公室",
+         text="学生事务办理地点为行政楼一站式服务大厅，服务时间为工作日上午八时三十分至十二时、下午十四时至十七时。"),
     # ↓ 下面是脏数据，会被入库把关拦掉（故意留着，证明关卡真的在工作）
-    dict(doc="退款政策.md", clause="退款-已发货", version="2024-05-01", source="旧版帮助中心（已下线）",
-         text="已发货订单申请退款，需扣除订单金额 30% 的手续费，退款周期 15 个工作日。"),
-    dict(doc="售后联系方式.md", clause="客户信息", version="2026-02-01", source="客服工单导出",
-         text="客户张先生的联系方式是 13812345678，身份证号 440301199001011234，请妥善保管。"),
-    dict(doc="退款政策.md", clause="退款-已发货", version="2026-03-01", source="客服话术库",
-         text="已发货订单若要退款，会扣 10 元运费，剩下的钱 1 至 3 个工作日退回原支付账户。"),
+    # ★ 注意上面两条 clause 是"请假-事假"和"请假-病假"—— 同一个 doc、不同 clause。
+    #   这是版本冲突关卡的命门：若只用 doc 名分组，这两条会互相挤掉（详见下面那段注释）。
+    dict(doc="学生请销假制度.md", clause="请假-事假", version="2024-05-01", source="旧版学生手册（已下线）",
+         text="事假须经家长与班主任联系说明后由班主任审核，事假一般不得超过一个月。"),
+    dict(doc="校园事务办理指南.md", clause="学生信息", version="2026-02-01", source="学生事务工单导出",
+         text="学生张明，学号 2024010101，手机号 13812345678，身份证号 440301199001011234，请妥善保管。"),
+    dict(doc="学生请销假制度.md", clause="请假-事假", version="2026-03-01", source="班主任话术库",
+         text="事假需要家长与班主任联系说明情况，班主任登记在册后视情况审核，事假原则上不超过两周。"),
 ]
 
 MIN_LEN = 15
@@ -149,7 +156,7 @@ class RAG:
 
         # 版本冲突：同一 (doc, clause) 只留 version 最大的
         # ★ 这里的 key 必须是 (文档, 条款) 两样一起，不能只用文档名！
-        #   只用文档名的话，"退款政策.md"里【已发货】和【未发货】是两条完全不同的规定，
+        #   只用文档名的话，"学生请销假制度.md"里【事假】和【病假】是两条完全不同的规定，
         #   会被误判成"同一条的新旧两版"，结果一条把另一条挤掉 —— 库里凭空少一条规则。
         newest = {}
         for c in kept:
@@ -202,7 +209,7 @@ class RAG:
 
     def answer(self, question, chunks):
         ctx = "\n".join(f"- {c['text']}" for c in chunks)
-        prompt = ("你是客服助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
+        prompt = ("你是学校学生事务的答疑助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
                   f"资料：\n{ctx}\n\n问题：{question}")
         return self.llm.invoke([HumanMessage(content=prompt)]).content
 
@@ -225,7 +232,7 @@ async def lifespan(app: FastAPI):
     print("服务关闭")
 
 
-app = FastAPI(title="客服知识库问答", lifespan=lifespan)
+app = FastAPI(title="校园政策问答", lifespan=lifespan)
 
 
 # pydantic 模型：规定"请求体必须长这样"，传错了框架自动返回 422，不用你写判断
@@ -305,7 +312,7 @@ def chat(req: ChatRequest):
 # ==================================================================
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>客服知识库问答</title>
+<title>校园政策问答</title>
 <style>
  body{font-family:system-ui,"Microsoft YaHei",sans-serif;max-width:760px;margin:40px auto;padding:0 20px;line-height:1.7}
  h2{font-weight:500} textarea{width:100%;height:60px;font-size:14px;padding:8px}
@@ -314,9 +321,9 @@ HTML_PAGE = """<!DOCTYPE html>
  .src{font-size:13px;color:#666;border-left:3px solid #ddd;padding-left:10px;margin-top:6px}
  .tag{display:inline-block;font-size:12px;background:#e8f0fe;color:#185FA5;border-radius:4px;padding:1px 6px;margin-right:6px}
 </style></head><body>
-<h2>客服知识库问答（RAG）</h2>
+<h2>校园政策问答（RAG）</h2>
 <p style="color:#666;font-size:14px">LangGraph + bge-small-zh 检索 + 入库把关 + rerank + DeepSeek 生成</p>
-<textarea id="q" placeholder="试试：已发货的订单退款要扣多少钱？ / 保修多久？ / 支持分期付款吗？"></textarea><br>
+<textarea id="q" placeholder="试试：事假最多能请多久？ / 处分要保留多久？ / 学校附近有哪些奶茶店？"></textarea><br>
 <button onclick="ask()">提问</button>
 <label style="margin-left:12px;font-size:13px"><input type="checkbox" id="rr" checked> 启用 rerank</label>
 <div class="box" id="ans" style="display:none"></div>

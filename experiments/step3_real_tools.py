@@ -8,38 +8,49 @@ Step 3：把"假工具"换成【真干活】的工具，并加上真实项目必
     set LANGSMITH_TRACING=false
     python step3_real_tools.py
 """
+import os
+import sys
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
-from dotenv import load_dotenv
+# ★ 这两行必须在 import langchain_* 之前 —— 本机应用控制策略拦掉了 uuid_utils 的
+#   DLL，langchain_core 导入 callbacks 时就会 import 它。不加会直接 ImportError。
+#   （主服务 service.py 里是同样的顺序，理由见那里的注释）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import env_compat                                   # noqa: E402
+env_compat.ensure_uuid_utils()                      # noqa: E402
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.tools import tool                                   # noqa: E402
+from dotenv import load_dotenv                                          # noqa: E402
 load_dotenv()
-from langchain_deepseek import ChatDeepSeek
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
-from typing import Annotated, TypedDict
+from langchain_deepseek import ChatDeepSeek                              # noqa: E402
+from langgraph.graph import END, START, StateGraph                      # noqa: E402
+from langgraph.graph.message import add_messages                       # noqa: E402
+from langgraph.prebuilt import ToolNode, tools_condition               # noqa: E402
+from typing import Annotated, TypedDict                                 # noqa: E402
 
 # ==================== ① 知识库：真文件，第一次跑会自动建 ====================
 DOCS = Path(__file__).parent / "step3_docs"
 
 SAMPLE_DOCS = {
-    "退款政策.md": """# 退款政策
-- 未发货：可全额退款，1-3 个工作日到账。
-- 已发货未签收：需拒收后退款，扣除 10 元运费。
-- 已签收：7 天无理由退货，商品需保持完好。
-- 生鲜类商品不支持 7 天无理由。
+    "学生请销假制度.md": """# 学生请销假制度
+- 事假：须由家长与班主任联系说明情况，班主任登记在册后视情况审核，一般不得超过两周。
+- 病假：须提供校医院或二级以上医院的证明，经班主任审核后报院系批准。
+- 销假：返校后三个工作日内提交销假单，逾期须说明原因。
+- 未经批准擅自离校，按学生纪律处分相关规定处理。
 """,
-    "发货时效.md": """# 发货时效
-- 普通订单：付款后 48 小时内发货。
-- 预售商品：以商品页标注时间为准，通常 7-15 天。
-- 定制商品：7 个工作日。
-- 法定节假日顺延。
+    "请假审批流程.md": """# 请假审批流程
+- 一日以内：由班主任审批。
+- 三日以内：由班主任审核后报院系备案。
+- 超过三日：须院系负责人批准，并通知家长。
+- 节假日期间离校，须提前书面申请。
 """,
-    "会员权益.md": """# 会员权益
-- 白银会员：满 99 元包邮。
-- 黄金会员：满 59 元包邮，生日双倍积分。
-- 钻石会员：全年包邮，专属客服，退货免运费。
+    "违纪处分种类.md": """# 违纪处分种类
+- 警告：情节轻微，违反一般管理规定。
+- 严重警告：情节较重，造成不良影响。
+- 记过：违反纪律，情节严重。
+- 留校察看：屡次违纪或情节恶劣，察看期为一年。
+- 开除学籍：严重违反法律法规或学校规章。
 """,
 }
 
@@ -134,18 +145,18 @@ def run(question):
 
 # ==================== 实验 A：正常提问，看它真去读文件 ====================
 print("=" * 62)
-print("实验 A：退款要多久到账？（工具会真的去读磁盘）")
-run("我买的东西还没发货，现在退款多久能到账？")
+print("实验 A：事假最多能请多久？（工具会真的去读磁盘）")
+run("我想请事假，最长能请多久？")
 
 # ==================== 实验 B：故意给错文件名，看它会不会自己纠错 ====================
 print("\n" + "=" * 62)
 print("实验 B：用户在问题里说了一个【不存在】的文档名")
-run("请打开《退货规则》这份文档，告诉我退货有什么条件。")
+run("请打开《学生住宿管理办法》这份文档，告诉我宿舍有什么规定。")
 
 # ==================== 实验 C：绕过模型，直接测工具的防线（不花钱） ====================
 print("\n" + "=" * 62)
 print("实验 C：直接调工具，测校验拦不拦得住（不走模型，秒出结果）")
-for bad in ["不存在的文件.md", "../../../Windows/win.ini", "退款政策.md"]:
+for bad in ["不存在的文件.md", "../../../Windows/win.ini", "学生请销假制度.md"]:
     print(f"   传 {bad!r} → ", end="")
     result = read_doc.invoke({"filename": bad})
     print(result.replace("\n", " ")[:70])

@@ -15,13 +15,21 @@
 import json
 import operator
 import os
+import sys
 import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Annotated, TypedDict
 
-from langgraph.graph import END, START, StateGraph
+# ★ 必须在 import langgraph 之前 —— 本机应用控制策略拦掉了 uuid_utils 的 DLL，
+#   而 langgraph 会经langchain_core 触发它，不加这两行会直接 ImportError 起不来。
+#   （主服务 service.py 里是同样的顺序，理由见那里的注释）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import env_compat                                   # noqa: E402
+env_compat.ensure_uuid_utils()                      # noqa: E402
+
+from langgraph.graph import END, START, StateGraph  # noqa: E402
 
 
 def sep(title):
@@ -72,7 +80,7 @@ print("   → 你拿到 key 后，把这 4 个变量设进系统环境变量，�
 sep("99：调试使用 —— 网页上能看到什么（+ 本地等价物）")
 # ==================================================================
 
-print("先搭一个两节点的客服图，等会既给它开 trace，也把它部署出去：")
+print("先搭一个两节点的校园事务图，等会既给它开 trace，也把它部署出去：")
 
 
 class State(TypedDict):
@@ -84,19 +92,22 @@ class State(TypedDict):
 
 def analyze(state):
     text = state["text"]
-    if "发货" in text or "订单" in text:
-        intent = "查订单"
-    elif "退款" in text:
-        intent = "退款"
+    # ★ 这里是全文件唯一"用到就崩"的地方：第 105-107 行 answers 的【键】
+    #   必须和这里产出的 intent 完全一致，否则下一行 answers[state["intent"]]
+    #   直接 KeyError。改关键词时记得同步改字典的键（Agent 第一次扫的时候漏过这处）。
+    if "请假" in text or "销假" in text:
+        intent = "请假"
+    elif "处分" in text or "违纪" in text:
+        intent = "处分"
     else:
         intent = "闲聊"
     return {"intent": intent, "log": [f"识别意图={intent}"]}
 
 
 def reply(state):
-    answers = {"查订单": "您的订单 48 小时内发货。",
-               "退款": "退款已受理，1-3 个工作日到账。",
-               "闲聊": "我是客服机器人，请问有什么业务要办？"}
+    answers = {"请假": "请假需填写《请假单》并逐级审批，超过三日须院系负责人批准。",
+               "处分": "处分种类有警告、严重警告、记过、留校察看、开除学籍。",
+               "闲聊": "我是校园事务助手，请问有什么需要办理？"}
     return {"reply": answers[state["intent"]], "log": ["回复已生成"]}
 
 
@@ -123,7 +134,7 @@ print("""
 print("本地等价演示（stream 版调试输出）：")
 cfg = {"configurable": {"thread_id": "debug-1"}}
 t0 = time.perf_counter()
-for chunk in app.stream({"text": "我的订单多久发货", "intent": "", "reply": "", "log": []}, cfg):
+for chunk in app.stream({"text": "请假需要谁审批", "intent": "", "reply": "", "log": []}, cfg):
     for node, update in chunk.items():
         cost = (time.perf_counter() - t0) * 1000
         print(f"   [{cost:7.1f} ms] 节点 {node!r} 产出：{update}")
@@ -140,7 +151,7 @@ print("""
     不部署：你的图只活在 demo.py 里，只有你能跑
     部署后：图挂在一个网址后面，网页/小程序/同事的代码都能调
 
-下面用 Python 标准库（不用装任何包）把刚才的客服图变成一个服务：
+下面用 Python 标准库（不用装任何包）把刚才的校园事务图变成一个服务：
 """)
 
 # 服务要用的是【编译好的图】app，线程里直接用它
@@ -178,7 +189,7 @@ threading.Thread(target=service.serve_forever, daemon=True).start()
 
 print(f"服务已挂在 http://127.0.0.1:{PORT}/chat 上，现在假装是个客户端发请求：")
 
-for question in ["我的订单多久发货", "你好呀"]:
+for question in ["请假需要谁审批", "你好呀"]:
     req = urllib.request.Request(
         f"http://127.0.0.1:{PORT}/chat",
         data=json.dumps({"text": question, "session": "u1"}).encode("utf-8"),

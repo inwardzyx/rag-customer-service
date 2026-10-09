@@ -78,6 +78,13 @@ print("                                        ↑ 这两个数字就是算钱�
 hav("2. 同样一句话，用 LangChain 封装写（你熟悉的形态）")
 # ---------------------------------------------------------
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import env_compat                                   # noqa: E402  ★ 必须在 import langchain 之前
+env_compat.ensure_mmh3()                            # noqa: E402  本机 DLL 被策略拦截时的降级方案
+env_compat.ensure_uuid_utils()                      # noqa: E402  同上，拦的是 uuid_utils
+
 from langchain_deepseek import ChatDeepSeek
 
 llm = ChatDeepSeek(model="deepseek-chat", temperature=0.3)
@@ -95,33 +102,33 @@ print("     ③ 各家模型的差异统一了 —— 换模型只改一行")
 hav("3. 加餐：让真模型真的开工单（这就是 101-105 集那张工单的来源）")
 # ---------------------------------------------------------
 
-def get_order_status(order_id: str) -> str:
-    """根据订单号查询订单状态。"""
-    orders = {"A1001": "已发货，48 小时内到达", "B2002": "待付款"}
-    return orders.get(order_id, f"没找到订单 {order_id}")
+def query_leave_record(student_id: str) -> str:
+    """根据学号查询请假记录状态。"""
+    leave_records = {"2024010101": "事假已批准，销假单已归档", "2024010202": "待销假"}
+    return leave_records.get(student_id, f"没找到该学号的请假记录 {student_id}")
 
 
 tools = [{
     "type": "function",
     "function": {
-        "name": "get_order_status",
-        "description": "根据订单号查询订单状态",
+        "name": "query_leave_record",
+        "description": "根据学号查询请假记录状态",
         "parameters": {
             "type": "object",
-            "properties": {"order_id": {"type": "string", "description": "订单号，如 A1001"}},
-            "required": ["order_id"],
+            "properties": {"student_id": {"type": "string", "description": "学号，如 2024010101"}},
+            "required": ["student_id"],
         },
     },
 }]
 
 resp2 = client.chat.completions.create(
     model="deepseek-chat",
-    messages=[{"role": "user", "content": "我的订单 A1001 到哪了？"}],
+    messages=[{"role": "user", "content": "我的学号 2024010101 审批到哪一步了？"}],
     tools=tools,
 )
 tc = resp2.choices[0].message.tool_calls
 
-print(f"   用户问：'我的订单 A1001 到哪了？'")
+print(f"   用户问：'我的学号 2024010101 审批到哪一步了？'")
 print(f"   模型 content   = {resp2.choices[0].message.content!r}")
 print("      ↑ 注意：不是空的！模型一边说话一边开工单，两者可以同时存在")
 print("        （之前 fake_llm 一直写成 content=''，那是简化了，真模型不一定）")
@@ -136,13 +143,13 @@ else:
 
 print("\n   ↑↑ 看到没？这就是之前 fake_llm 一直在伪造的东西。")
 print("      现在它是模型自己算出来的：它读了工具的说明书(description)，")
-print("      判断『这个问题该查订单』，还自己填出了 order_id='A1001'。")
+print("      判断『这个问题该查请假记录』，还自己填出了 student_id='2024010101'。")
 
 if tc:
     import json
     args = json.loads(tc[0].function.arguments)
-    print(f"\n   把工单交给工人执行：get_order_status(**{args})")
-    print(f"   工人返回：{get_order_status(**args)}")
+    print(f"\n   把工单交给工人执行：query_leave_record(**{args})")
+    print(f"   工人返回：{query_leave_record(**args)}")
     print("\n   到这里，101-105 集那张图就【全部接上了真模型】——")
     print("   之前是 fake_llm 开工单，现在是真模型开工单，其余代码一行不用改。")
 

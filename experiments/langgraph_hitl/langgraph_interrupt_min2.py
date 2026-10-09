@@ -23,7 +23,7 @@ def prepare(state):
 
 
 def pack(state):
-    return {"log": ["装箱发货"]}
+    return {"log": ["封装归档"]}
 
 
 # ============ 故事A：节点函数里写 interrupt() ============
