@@ -42,6 +42,21 @@ QS = json.loads((ROOT / "evalset" / "questions.json").read_text(encoding="utf-8"
 ANS = [q for q in QS if q["type"] == "answer"]
 
 
+def _contrib(krrf, rank):
+    """RRF 单项贡献 1/(k+rank)。
+
+    ★ 与 probe_sensitivity.py 的同名函数保持一致：k=0 且 rank=0 时公式本身是 1/0，
+      这是 RRF 的定义域边界不是 bug（说明"k 必须大于 0"）。返回 inf 让排序能跑完，
+      顺便把"k=0 会爆"变成一个可报告的实测结果。
+      —— 这个兜底是 DeepSeek Harness 做独立复核时发现漏掉才补上的：
+      原实现直接写 1.0/(krrf+rank)，k=0 会 ZeroDivisionError。
+    """
+    try:
+        return 1.0 / (krrf + rank)
+    except ZeroDivisionError:
+        return float("inf")
+
+
 def ranked(query, krrf=60):
     """返回按 RRF 排好序的候选列表（不截断）。"""
     rag = svc.rag
@@ -52,9 +67,9 @@ def ranked(query, krrf=60):
     bm25_order = np.argsort(-rag.bm25.get_scores(tokens))
     rrf = {}
     for rank, idx in enumerate(vec_order):
-        rrf[idx] = rrf.get(idx, 0.0) + 1.0 / (krrf + rank)
+        rrf[idx] = rrf.get(idx, 0.0) + _contrib(krrf, rank)
     for rank, idx in enumerate(bm25_order):
-        rrf[idx] = rrf.get(idx, 0.0) + 1.0 / (krrf + rank)
+        rrf[idx] = rrf.get(idx, 0.0) + _contrib(krrf, rank)
     order = sorted(rrf.items(), key=lambda kv: kv[1], reverse=True)
     return [(rag.chunks[i], float(vec_scores[i])) for i, _ in order]
 
