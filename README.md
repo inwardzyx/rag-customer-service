@@ -233,6 +233,17 @@ VEC_REJECT_THRESHOLD = 0.55
 | `experiments/step4_rag_demo.py` | 文档切块 + 向量检索 + 混合检索 | 光看字面（BM25）和光看语义（向量）都会翻车 |
 | `experiments/rag_concepts_demo.py` | RAG 概念拆开演示 | recall@k 怎么算、喂假资料会怎么产生幻觉 |
 | `experiments/step5_ingest_guard_demo.py` | **入库前把关** | 垃圾进 = 幻觉出，必须在入口拦 |
+| `experiments/step6_fastapi_service.py` | 把整条链包成 HTTP 服务 | 从"自己能跑"到"别人能用" |
+| `experiments/langgraph_basics/langgraph_toolnode_demo.py` | 工具调用的完整机制 | `ToolNode` 怎么把工具结果塞回消息流 |
+| `experiments/langgraph_memory/` | 会话内记忆 / 跨会话长期记忆 | **checkpoint 和 Store 是两回事**（前者按 thread，后者全局共用） |
+| `experiments/langgraph_hitl/` | Human-in-the-loop | 中断后**节点从头重跑**，所以恢复值要幂等 |
+| `experiments/langgraph_persistence/` | 存档落到 PostgreSQL | 换机器进程重启存档还在；连接串该读环境变量而不是硬编码 |
+| `experiments/python_syntax_for_langgraph.py` | Python 语法补漏（我写的） | 读框架代码卡住往往不是框架问题，是语法 |
+
+> ★ 这一节列的文件**大部分是跟着视频课敲的**，来源在 `experiments/README.md`
+> 里逐个标了。我保留它们是因为两件事值得说：**能照文档跑通一整套技术栈**，
+> 以及**清楚哪些是抄的、哪些是我想的**。而 `service.py` 至今一行 LangGraph 都没有 ——
+> 理由见〈技术栈〉那节末尾。
 | `service.py` | 包成 HTTP 服务 + 网页 | 模型/向量库只在启动时加载一次，绝不每请求重建 |
 | `tests/test_guard.py` | 把关 + 拒答的回归测试（不起服务也能跑） | 25 条 pytest 断言，改坏了立刻变红（见「变异测试」） |
 | `kb/loader.py` + `docs/` | 知识库改成**从文件读**（kb/inbox 分目录） | 从"手敲 10 条常量"到"扔 md 就入库"；loader 可脱离模型独立单测 |
@@ -658,9 +669,30 @@ set(jieba.cut_for_search("我要请一个礼拜的假，需要哪一级批准？
 langchain-core 1.6.3 · DeepSeek（`deepseek-chat`）·
 bge-small-zh-v1.5（512 维中文 embedding）· FastAPI · uvicorn · jieba · rank-bm25 · numpy · pytest
 
-> **关于 LangGraph**：它只用在 `experiments/step1-3`（学工具调用的那几步）。
-> `service.py` 里**一行 LangGraph 都没有** —— 这个服务是线性的（检索 → 精排 → 生成），
-> 套个图只会增加复杂度。知道什么时候**不该用**一个框架，和会用它是两回事。
+> **关于 LangGraph —— 分两层说**
+>
+> **主干不用图**：`service.py` 里**一行 LangGraph 都没有**。这个服务的链路是线性的
+> （检索 → 精排 → 生成），每一步的输入输出都是确定的。套个图只会增加复杂度，
+> 而且图框架会顺手带来一堆新问题（状态序列化、checkpoint、节点幂等）——
+> 在没有循环、没有多轮、没有工具选择的时候，这些成本换不到任何东西。
+> **知道什么时候不该用一个框架，和会用它是两回事。**
+>
+> **但图这块我不是只看过**：`experiments/langgraph_*/` 四个子目录下有
+> **20 个脚本 3100 多行** LangGraph，按知识点分成四块 —— 工具调用（`ToolNode`，
+> 262 行）、记忆（checkpoint + 跨会话 `Store` + 时间旅行 fork）、Human-in-the-loop
+> （中断与恢复）、持久化（`PostgresSaver`，**在虚拟机的 PostgreSQL 里真跑过，
+> 不是本地跑通就算**）。
+> 另有 `step1`~`step6` 一条完整教学链，和一份我写的 1186 行 Python 语法速查表。
+>
+> 那些代码**大部分是跟着视频课敲的** —— 来源在 `experiments/README.md` 里逐个标了，
+> 「和 N 集一样」的注释我故意留着没删。如实标注比藏着强：
+> 它同时说明两件事 —— 我能照文档跑通整套技术栈，以及**我分得清哪些是抄的、哪些是我想的**。
+>
+> **那什么时候主干会用上图？** 出现这三类问题之一的时候：query 需要改写后重检、
+> 需要在多个工具之间选择、需要跨轮次记住用户上下文。
+> ★ 说实话：**这三样我目前一个都没有做**，所以我选择不套图 ——
+> 硬套一层只会得到一个"用了 LangGraph"的壳，而 `service.py` 的拒答短路
+> 本身就已经是一个 guardrail 节点了，把它包装成节点并不改变任何行为。
 
 检索是**向量检索 + BM25 混合 + RRF 融合 + 大模型精排**。
 
@@ -693,14 +725,18 @@ rag-customer-service/
 │       ├── source_policy.md     #   只含校规原文（无 chunk / 无检索信息，自检过）
 │       ├── questions_template.json  # 空模板：question / type / gold / why_forced_to_refuse
 │       └── make_pack.py         #   重新生成上面三个文件 + 防泄漏自检
-├── experiments/                 # 每一步的长成过程（教学脚本，可独立运行）
-│   ├── step1_real_llm_graph.py
-│   ├── step2_two_tools_choice.py
-│   ├── step3_real_tools.py
-│   ├── step4_rag_demo.py
-│   ├── rag_concepts_demo.py
-│   ├── step5_ingest_guard_demo.py
-│   └── step3_docs/ step4_docs/  # 示例知识库（含脏数据）
+├── experiments/                 # ★ 学习过程与语言练习（★ 来源逐个标注在 README 里）
+│   ├── README.md                #   ★ 哪些是跟课敲的 / 哪些是我写的 / 跑法 / 还没做的
+│   ├── step1_real_llm_graph.py ~ step6_fastapi_service.py   # 一条完整教学链
+│   ├── rag_concepts_demo.py     #   RAG 概念从零讲（含噪声实验）
+│   ├── python_syntax_for_langgraph.py  # 我写的 Python 语法速查（1186 行）
+│   ├── langgraph_basics/        #   20 个脚本 3100 多行，按知识点分四块：
+│   │   ├── langgraph_toolnode_demo.py   #   工具调用（ToolNode）
+│   │   └── ...                          #   控制流 / 条件边 / 子图
+│   ├── langgraph_memory/        #   checkpoint（会话内）/ Store（跨会话）/ 时间旅行
+│   ├── langgraph_hitl/          #   Human-in-the-loop 中断与恢复
+│   ├── langgraph_persistence/   #   PostgresSaver（虚拟机 PostgreSQL 里真跑过）
+│   └── step3_docs/ step4_docs/  #   示例知识库（含脏数据）
 ├── scripts/                     # 可复现的量测与验证工具（不进运行时）
 │   ├── measure_chunk_health.py       # 数据层体检：块健不健康（秒级，不加载模型）
 │   ├── measure_dup_distribution.py   # 83 块两两全量算余弦（3403 对）
