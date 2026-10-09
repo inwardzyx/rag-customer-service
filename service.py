@@ -58,8 +58,9 @@ CACHE_DIR = os.environ.get(
 import numpy as np                                  # noqa: E402
 import jieba                                        # noqa: E402
 import uvicorn                                      # noqa: E402
-import env_compat                                   # noqa: E402  ★ 必须放在 import fastembed 之前
+import env_compat                                   # noqa: E402  ★ 必须放在 import fastembed / langchain 之前
 env_compat.ensure_mmh3()                            # 本机 DLL 被策略拦截时的降级方案，见 env_compat.py
+env_compat.ensure_uuid_utils()                      # 同上，拦的是 uuid_utils（langchain 用它生成 trace id）
 from kb.loader import load_documents                # noqa: E402  知识库从 docs/ 加载，不再写死 RAW_DOCS
 from fastapi import FastAPI                         # noqa: E402
 from fastapi.responses import HTMLResponse          # noqa: E402
