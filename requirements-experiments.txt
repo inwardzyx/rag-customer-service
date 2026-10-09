@@ -6,13 +6,35 @@
 #   也会误以为"这个项目用了 LangGraph"—— 其实 LangGraph 只出现在学习过程的教学脚本里。
 #
 # 装法（想跑 experiments/ 里的脚本时才装）：
-#   D:\Python-project\.venv\Scripts\python.exe -m pip install -r requirements-experiments.txt
+#   <你的虚拟环境>\Scripts\python.exe -m pip install -r requirements-experiments.txt
 #   （会先自动把 requirements.txt 也装上）
+#
+# ★ 2026-10-09 补：experiments/ 从 6 个跟课脚本扩到 20 个（按知识点分成 4 个子目录），
+#   所以依赖也跟着补齐了 —— 原则是【代码里直接 import 的就显式声明】，
+#   跟 requirements.txt 里那句注释同一个原则，不靠"别人会顺手装上"。
 
 -r requirements.txt
 
-# LangGraph：step1~step3 教学脚本用它搭 StateGraph / ToolNode
+# ---- LangGraph：搭 StateGraph / 条件边 / ToolNode / 存档 ----
 langgraph==1.2.11
-# langchain 本体 + 文本切分器：只在 experiments/ 里用到
+# langchain 本体 + 文本切块器：只在 experiments/ 里用到
 langchain==1.4.0
 langchain-text-splitters==1.1.2
+
+# ---- PostgreSQL 驱动：langgraph 的 PostgresSaver 需要它 ----
+# 用在 langgraph_persistence/ 和 langgraph_memory/langgraph_recover_fork_demo.py
+# 这三个脚本要连一个真实 PostgreSQL，连接串从环境变量 LANGGRAPH_DB_URI 读：
+#   set LANGGRAPH_DB_URI=postgresql://用户名:密码@主机:5432/库名
+# 不设则默认 localhost —— 也就是说想跑这几个脚本必须先有一个 PostgreSQL，
+# 其余脚本不需要。
+psycopg[binary]
+
+# ---- 关于 langsmith ----
+# langgraph_persistence/langgraph_deploy_langsmith_demo.py 讲的是"怎么接入 LangSmith"，
+# 但它【不 import langsmith】—— 接入靠 4 个环境变量（LANGSMITH_TRACING 等），
+# langchain/langgraph 内部自己埋了上报点。所以这里不声明 langsmith。
+#
+# ★ 顺带一条踩过的坑：这台机器的应用控制策略拦掉了 uuid_utils 的 DLL，
+#   而 langsmith 会通过 setuptools entry_points 【自动注册一个 pytest 插件】，
+#   在 pytest 启动阶段就 import uuid_utils —— 比 conftest.py 还早。
+#   修法见根目录 pytest.ini 的 addopts（-p no:langsmith_plugin）。
