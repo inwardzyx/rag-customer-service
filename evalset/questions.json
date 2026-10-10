@@ -16,7 +16,8 @@
   {"id": "q15", "type": "refuse", "question": "图书馆几点关门？", "gold": null},
   {"id": "q16", "type": "refuse", "question": "学费一年多少钱？", "gold": null},
   {"id": "q17", "type": "refuse", "question": "食堂几点开饭？", "gold": null},
-  {"id": "q18", "type": "refuse", "question": "怎么申请助学贷款？", "gold": null},
+  {"id": "q18", "type": "answer", "question": "怎么申请助学贷款？", "gold": ["学生资助工作实施办法.md", "第十五条"],
+   "note": "★ 2026-10-10 由 refuse 改成 answer：学校 9 份现行制度入库后，库里有真答案了。原文见该文件第十五条：「国家助学贷款。家庭经济困难学生可以向户籍所在县（市、区）的学生资助管理机构申请生源地信用助学贷款，贷款金额不超过20000元/生/年。」实测向量分 0.7276。之前它答不出是因为 68 块语料里真没有资助体系，不是系统故障。★ 这也说明【held-out 标注必须跟着语料一起更新】——语料一换，拒答题的边界就变了。"},
   {"id": "q19", "type": "refuse", "question": "宿舍晚上几点熄灯？", "gold": null, "boundary": true},
   {"id": "q20", "type": "refuse", "question": "学生证丢了怎么补办？", "gold": null, "boundary": true}
 ]

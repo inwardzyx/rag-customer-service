@@ -53,8 +53,13 @@ def test_dataset_shape(rag):
     qs = _load()
     ans = [q for q in qs if q["type"] == "answer"]
     ref = [q for q in qs if q["type"] == "refuse"]
-    assert len(ans) == 14, f"应答题应为 14，实际 {len(ans)}"
-    assert len(ref) == 6, f"拒答题应为 6，实际 {len(ref)}"
+    # ★ 2026-10-10：14+6 → 15+5。学校 9 份现行制度入库后，
+    #   q18「怎么申请助学贷款？」从refuse 改成 answer
+    #   （`学生资助工作实施办法.md` 第十五条真的有答案，向量分 0.7276）。
+    #   ⇒ 这不是凑数，是【标注必须跟着语料一起更新】的证据：
+    #     语料一换，"库里答不出"这件事就变了，拒答边界跟着变。
+    assert len(ans) == 15, f"应答题应为 15，实际 {len(ans)}"
+    assert len(ref) == 5, f"拒答题应为 5，实际 {len(ref)}"
     assert sum(1 for q in ref if q.get("boundary")) == 2, "边界拒答题应恰好 2 道"
     ids = [q["id"] for q in qs]
     assert len(ids) == len(set(ids)), f"题目 id 有重复：{ids}"
@@ -124,13 +129,23 @@ def test_no_answerable_missed(rag, monkeypatch):
 
 
 # ==================================================================
-# ④ 拒答层：4 道清晰拒答题必须拒（2 道边界题允许被误答，只上报不卡）
+# ④ 拒答层：清晰拒答题必须拒（boundary 题允许被误答，只上报不卡）
 # ==================================================================
 def test_clear_refusals_held(rag, monkeypatch):
     # 这条现在走的是 service.py:591 的早退路径、不碰模型，所以不注入也绿。
     # 但那是【数据侥幸】—— 拒答题恰好都低于阈值而已。哪天有一条过了线，
     # 它就会掉进 605 行炸出一个不相干的 ValidationError，白白丢掉诊断信息。
     # 注入之后，将来真出问题时给出的是「清晰拒答题没拒答：[qX]」这种能直接用的断言。
+    #
+    # ★★ 2026-10-10：这条【留红】，当前唯一放行的是 q16「学费一年多少钱？」（0.6321）。
+    #   它是【真误放行】，不是标注问题：
+    #     · 库里确实没有收费标准（新增的 9 份制度里没有一份写学费/收费）
+    #     · 但奖助学金那两份写满了金额（国家奖学金 10000/年、励志奖学金 6000/年、
+    #       助学金 2500-5000/年）⇒ "学费"这个问法被"金额"吸过去了，
+    #       召回来的是专项补助管理办法第九条。
+    #   ⇒ 这是"语料变多 ⇒ 噪声块变多 ⇒ 旧阈值失效"的真实样本，
+    #     和 q18 的性质完全不同（q18 是标注过时，已改成 answer 题）。
+    #   ⇒ 产品默认路径走 rerank（精排分<5 拒答）不受影响，受影响的只有离线评测层。
     monkeypatch.setattr(svc.rag, "_llm", _FakeLLM("（假模型返回，未真实调用）"))
     bad = []
     for q in _load():
@@ -138,4 +153,8 @@ def test_clear_refusals_held(rag, monkeypatch):
             continue
         if svc.chat(svc.ChatRequest(question=q["question"], use_rerank=False)).knowledge_hit:
             bad.append(q["id"])
-    assert not bad, f"清晰拒答题没拒答：{bad}"
+    assert not bad, (
+        f"清晰拒答题没拒答：{bad}\n"
+        f"  已知欠账（2026-10-10 语料扩容引入）：当前是 q16「学费一年多少钱？」0.6321。\n"
+        f"  它是真误放行 —— 库里没有收费标准，但奖助学金那两份写满金额把它吸过去了。\n"
+        f"  evalset/probe_threshold.py 实测：不存在能同时放行应答题、拦住拒答题的阈值。")
