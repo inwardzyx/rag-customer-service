@@ -179,6 +179,28 @@ def main():
         qt = next(q["question"] for q in answerable if q["id"] == qid)
         lines.append(f"- {qid}: {'OK' if r else 'MISS'}  {qt}")
     lines.append("")
+    # ★ 漏答明细：光有 "2/19" 这个数字是没法动手的 —— 得知道【是哪两道】，
+    #   更要紧的是知道【是检索没捞到，还是捞到了却被阈值拒掉】。
+    #   这两种诊断指向完全不同的修法：
+    #     · gold 没进前 5 → 检索问题（词表/召回）
+    #     · gold 进了前 5 却被拒 → 判据问题（阈值/精排 prompt）
+    #   2026-10-10 就是缺这一节，导致 held-out 上"在线层漏答 2 道"查不出是哪两道。
+    recall_map = dict(recalled)
+    lines.append("## 应答题 漏答明细")
+    if miss_count == 0:
+        lines.append("- （无：该答的题一条都没被拒）")
+    else:
+        for qid, hit in miss:
+            if hit:
+                continue
+            qt = next(q["question"] for q in answerable if q["id"] == qid)
+            if recall_map.get(qid):
+                why = "gold 进了粗捞前 5，是【判据】把它拒掉的 → 查阈值/精排 prompt"
+            else:
+                why = "gold 没进粗捞前 5，是【检索】没捞到 → 查词表/召回"
+            lines.append(f"- {qid}: 被拒（knowledge_hit=false）  {qt}")
+            lines.append(f"    ↳ {why}")
+    lines.append("")
     lines.append("## 拒答题 拒答明细")
     for qid, hit in refused:
         qt = next(q["question"] for q in refuse if q["id"] == qid)
