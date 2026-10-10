@@ -29,6 +29,12 @@ langchain-text-splitters==1.1.2
 # 其余脚本不需要。
 psycopg[binary]
 
+# ---- 录 README 动图（scripts/make_gif.py）----
+# 只需要 Pillow：把 scripts/record_demo.mjs 截下的逐帧 PNG 合成 GIF
+# （裁空白 / 去重 / 量化三件事都靠它）。
+# Node 那半边（record_demo.mjs）不走 pip —— 用系统 Node 18+ 直接跑。
+pillow==12.3.0
+
 # ---- 关于 langsmith ----
 # langgraph_persistence/langgraph_deploy_langsmith_demo.py 讲的是"怎么接入 LangSmith"，
 # 但它【不 import langsmith】—— 接入靠 4 个环境变量（LANGSMITH_TRACING 等），

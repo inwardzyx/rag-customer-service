@@ -38,3 +38,7 @@ CLAUDE.md
 
 # 黑板原始日志（含 CLI 噪音，不进仓库；结论 _reviews/*.md 保留）
 _reviews/_*.log
+
+# 录 README 动图时的中间产物（帧可能上百张）与 Chrome 临时 profile
+.demo_frames/
+.demo_chrome_profile/

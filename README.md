@@ -887,6 +887,10 @@ rag-customer-service/
 │   ├── measure_chunk_health.py       # 数据层体检：块健不健康（秒级，不加载模型）
 │   ├── measure_dup_distribution.py   # 83 块两两全量算余弦（3403 对）
 │   ├── measure_dup_threshold.py      # 真重复/同义改写/不同条款 三类配对各是多少
+│   ├── check_readme_numbers.py       # 数字对账：README 与落盘产物必须一致（pre-commit 调它）
+│   ├── mutate_check_numbers.py       # 对"对账器"本身做变异测试（不然它会变成假通过）
+│   ├── record_demo.mjs               # 录制顶部那段动图：CDP 驱动浏览器逐帧截屏
+│   ├── make_gif.py                   # 把帧合成 GIF（裁空白 + 去重 + 量化）
 │   └── mutate_check.py               # 变异测试：故意改坏代码，看测试红不红（7 条）
 └── tests/                       # 共 57 条，全是 pytest 断言（旧版是 print 自检，退出码永远 0）
     ├── test_guard.py            # 把关 + 拒答 + PII 脱敏 + XSS 回归（25 条）
