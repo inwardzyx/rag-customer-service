@@ -23,6 +23,8 @@
 from __future__ import annotations
 
 import json
+import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -44,8 +46,14 @@ LO, HI = 0.30, 0.95
 
 
 def main() -> int:
-    with open(QUESTIONS, "r", encoding="utf-8") as f:
-        qs = json.load(f)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--questions", default=str(QUESTIONS),
+                    help="题目文件（默认主评测集）。★ 指向 held-out 才能在真实分布上找操作点")
+    A = ap.parse_args()
+    with open(A.questions, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    # 两种形状都收（主集是裸数组，held-out 是 {_说明, questions}）
+    qs = data.get("questions") if isinstance(data, dict) else data
     answerable = [q for q in qs if q["type"] == "answer"]
     refuse = [q for q in qs if q["type"] == "refuse"]
 
@@ -126,7 +134,9 @@ def main() -> int:
         else:
             print(f"  → 当前阈值【偏高】，会误拒；建议 ≤ {feasible[-1]:.2f}")
     else:
-        print("  ★★ 不存在全对阈值 —— 纯向量路在这 20 题上【无解】。")
+        print(f"  ★★ 不存在全对阈值 —— 纯向量路在这 {len(answerable) + len(refuse)} 题上【无解】。")
+        # ★ 原来这里写死"20 题"：扫 held-out（105 题）时它会照样说 20 题 ——
+        #   一个数字写死在提示里，扫描范围变了它不会跟着变。
         print("     这不是阈值没调好，是【判据本身不够】。")
         print("     产品默认路径（use_rerank=true，精排分<5 拒答）不受此影响，")
         print("     所以线上不一定要改阈值 —— 但 README 里 0.55 的论证方式必须改。")
