@@ -13,11 +13,16 @@
   {"id": "q12", "type": "answer", "question": "我要请一个礼拜的假，需要哪一级批准？", "gold": ["学生请销假制度.md", "总则-第三条"]},
   {"id": "q13", "type": "answer", "question": "假期结束不销假会有什么后果？", "gold": ["学生请销假制度.md", "总则-第四条"]},
   {"id": "q14", "type": "answer", "question": "用欺骗手段请假被发现了怎么处理？", "gold": ["学生请销假制度.md", "总则-第六条"]},
-  {"id": "q15", "type": "refuse", "question": "图书馆几点关门？", "gold": null},
-  {"id": "q16", "type": "refuse", "question": "学费一年多少钱？", "gold": null},
-  {"id": "q17", "type": "refuse", "question": "食堂几点开饭？", "gold": null},
+  {"id": "q15", "type": "refuse", "question": "图书馆几点关门？", "gold": null,
+   "why_forced_to_refuse": "全库 10 份校规全是学生管理规定，没有任何一份写场馆/图书馆的开放时间 —— 这是「库里压根没有这类信息」，不是「没检索到」。"},
+  {"id": "q16", "type": "refuse", "question": "学费一年多少钱？", "gold": null,
+   "why_forced_to_refuse": "库里没有「学费标准」这个值。沾「学费」的条款全是【资助/减免额度】：专项补助第七条「学费标准低于 6000 元的按实际应缴金额资助」、第九条「减免一学年学费 / 减免一半」。问的是学费本身的金额 ⇒ 语义挨着，但答非所问（relevance ≠ answerability）。★ 正确回答不该是干拒，而是「现行制度未规定学费标准，但困难学生可申请减免」。"},
+  {"id": "q17", "type": "refuse", "question": "食堂几点开饭？", "gold": null,
+   "why_forced_to_refuse": "校规里没有任何一条写食堂供餐时间 —— 餐饮服务不属于学生管理制度的内容范围。"},
   {"id": "q18", "type": "answer", "question": "怎么申请助学贷款？", "gold": ["学生资助工作实施办法.md", "第十五条"],
    "note": "★ 2026-10-10 由 refuse 改成 answer：学校 9 份现行制度入库后，库里有真答案了。原文见该文件第十五条：「国家助学贷款。家庭经济困难学生可以向户籍所在县（市、区）的学生资助管理机构申请生源地信用助学贷款，贷款金额不超过20000元/生/年。」实测向量分 0.7276。之前它答不出是因为 68 块语料里真没有资助体系，不是系统故障。★ 这也说明【held-out 标注必须跟着语料一起更新】——语料一换，拒答题的边界就变了。"},
-  {"id": "q19", "type": "refuse", "question": "宿舍晚上几点熄灯？", "gold": null, "boundary": true},
-  {"id": "q20", "type": "refuse", "question": "学生证丢了怎么补办？", "gold": null, "boundary": true}
+  {"id": "q19", "type": "refuse", "question": "宿舍晚上几点熄灯？", "gold": null, "boundary": true,
+   "why_forced_to_refuse": "★ 边界题。有条款要求「学生应当遵守学校作息时间」（学生纪律处分管理规定 第三章-第十八条（一）），但**不给具体时刻**。实测精排曾给它打 9 分（语义很近），可里面没有用户要的那个值 —— 所以判据不是「像不像」，是「有没有那个值」。"},
+  {"id": "q20", "type": "refuse", "question": "学生证丢了怎么补办？", "gold": null, "boundary": true,
+   "why_forced_to_refuse": "★ 边界题。库里没有补办证件的流程；沾边的只有「转借、冒用证件」的处分条款。实测向量分 0.5968 越过 0.55 阈值（纯向量路会放行），精排按住在 0 分 —— 这道题是「产品默认要开精排」的实锤。"}
 ]

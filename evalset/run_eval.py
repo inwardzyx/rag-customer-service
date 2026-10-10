@@ -62,9 +62,24 @@ class _OfflineLLM:
         return _OfflineResp("（离线评测不调用生成模型）")
 
 
-def load_questions():
-    with open(QUESTIONS, "r", encoding="utf-8") as f:
-        return json.load(f)
+def load_questions(path=None):
+    """读题目文件。默认走主评测集；传 --questions 可换成 held-out 那套。
+
+    ★ 为什么参数化：held-out（`evalset/heldout/questions.json`）是"独立验证集"，
+      但这里原来把路径写死，导致那套题根本跑不了 —— 跑不了的 held-out 等于没有。
+
+    ★ 两种形状都收（第一版只认裸数组，跑 held-out 会炸）：
+      · 主评测集 `evalset/questions.json` 是**裸数组** `[...]`
+      · held-out 是出题模板规定的 **{_说明: [...], questions: [...]}**（要带出题说明）
+      只认前者的后果：在 `q["type"]` 处抛
+      `TypeError: string indices must be integers, not 'str'`
+      —— 报错信息里完全看不出真正原因是"两个文件的形状不一样"。
+    """
+    with open(path or QUESTIONS, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        return data.get("questions", [])
+    return data
 
 
 def recall_gold(q, k=5):
@@ -91,11 +106,20 @@ def main():
     ap.add_argument("--report", action="store_true",
                     help="结果写入 evalset/report-<层>.md（离线层/在线层分开，"
                          "不互相覆盖——两层数字不可比，覆盖会让人误读）")
+    ap.add_argument("--questions", default=None,
+                    help="题目文件（默认 evalset/questions.json）。跑 held-out 时指向它")
+    ap.add_argument("--label", default=None,
+                    help="报告名后缀：report-<层>-<label>.md。"
+                         "★ 用 --questions 时必须给，否则会覆盖主评测集的报告")
     args = ap.parse_args()
+
+    if args.questions and not args.label:
+        ap.error("--questions 必须和 --label 一起用：否则写出的报告会覆盖主评测集的 "
+                 "report-vector.md / report-rerank.md，而 README 和数字对账器都在引用它们")
 
     os.environ.setdefault("LANGSMITH_TRACING", "false")
 
-    qs = load_questions()
+    qs = load_questions(args.questions)
     logger.info("加载模型 + 建库……")
     svc.rag.startup()
     logger.info(f"入库 {len(svc.rag.chunks)} 块，拦下 {len(svc.rag.rejected)} 块")
@@ -170,7 +194,9 @@ def main():
         #   共用一个文件名时，跑完在线层就会把离线层的 3/5 覆盖掉，
         #   而 README 和实验文档都在引用那个 3/5 —— 覆盖一次，文档就开始说谎。
         layer = "rerank" if args.with_llm else "vector"
-        out = REPO_ROOT / "evalset" / f"report-{layer}.md"
+        # ★ label 把 held-out 的报告和主评测集的分开，绝不互相覆盖
+        suffix = f"-{args.label}" if args.label else ""
+        out = REPO_ROOT / "evalset" / f"report-{layer}{suffix}.md"
         out.write_text(report + "\n", encoding="utf-8")
         logger.info(f"已写入 {out}")
 
