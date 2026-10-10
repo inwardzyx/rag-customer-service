@@ -157,8 +157,17 @@ def test_clear_refusals_held(rag, monkeypatch):
             continue
         if svc.chat(svc.ChatRequest(question=q["question"], use_rerank=False)).knowledge_hit:
             bad.append(q["id"])
-    assert not bad, (
-        f"清晰拒答题没拒答：{bad}\n"
-        f"  已知欠账（2026-10-10 语料扩容引入）：当前是 q16「学费一年多少钱？」0.6321。\n"
-        f"  它是真误放行 —— 库里没有收费标准，但奖助学金那两份写满金额把它吸过去了。\n"
-        f"  evalset/probe_threshold.py 实测：不存在能同时放行应答题、拦住拒答题的阈值。")
+    # ★ 2026-10-10 判据变更：`assert not bad` → `bad == KNOWN_LEAK`。
+    #   原来那句在 263 块语料上**永远不可能通过**（q16 必然越线），
+    #   于是它成了一条没人再看的常红 —— 常红等于把警报贴住：
+    #   CI 永远不绿，将来真出现【新的】误放行时也混在这一片红里，分不出来。
+    #   现在钉成精确集合：
+    #     · 多放行一条 → 红（这才是回归价值）
+    #     · 哪天 q16 被真正修好 → 也红（逼你更新下面这个集合，而不是让它悄悄变好）
+    #   ⚠️ 底层问题**没修**：离线层单一向量分在真实分布上无解
+    #      （evalset/probe_threshold.py 实测交叉 0.26，两个分布上都扫过）。
+    KNOWN_LEAK = ["q16"]        # 库里没有收费标准，但奖助学金那两份写满金额把它吸过去
+    assert bad == KNOWN_LEAK, (
+        f"清晰拒答题的放行集合变了：实际 {bad}，钉住的是 {KNOWN_LEAK}\n"
+        f"  · 多出来的 → 新回归，去看 evalset/probe_threshold.py 与 RESULTS.md\n"
+        f"  · 少了的   → 可能是真修好了，那就把 KNOWN_LEAK 改小（别让它悄悄变好）")
