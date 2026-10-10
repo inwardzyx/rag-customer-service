@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# ============================================================
+# pre-commit —— 只跑【零 token】的机械检查
+# ============================================================
+# ★ 为什么这里不自动派 cc / DSH：
+#   每起一个 cc 进程 ≈18K token 冷启动，55 个提交就是 100万+，
+#   而绝大多数提交（比如改 README措辞）根本不需要审稿人。
+#   ⇒ 派 agent 留给「改既有代码之前」这个真触发点（见 CLAUDE.md 硬规矩 2），
+#     钩子里只做一件事：**几毫秒就能查完、且不留假象**的检查。
+#
+# ⚠️ 勾 --no-verify 能绕过（git原生行为）。这不是漏洞，
+#    是"绕过检查"本身就得留下痕迹（用了 --no-verify 就不该写"检查过了"）。
+# ============================================================
+
+set -uo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# ★ 解释器用绝对路径：这台机器裸敲 python 会命中 conda base(3.8)，
+#   跑起来的结果不能代表项目环境（见用户级记忆里的环境事实）。
+PY="D:/Python-project/.venv/Scripts/python.exe"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+
+fail=0
+
+# ---- 1. 数字对账：README 的数字 vs 落盘产物 ----
+if "$PY" "$REPO/scripts/check_readme_numbers.py"; then
+    echo "[pre-commit] 数字对账 OK"
+else
+    echo "[pre-commit] ★ 数字对账失败 —— 上面列出的数字与产物不一致"
+    echo "             要绕过请用 git commit --no-verify，"
+    echo "             但 commit 信息里别写「检查通过了」。"
+    fail=1
+fi
+
+echo
+if [ "$fail" -ne 0 ]; then
+    echo "[pre-commit] 有检查没通过，提交被拦下。"
+    exit 1
+fi
+echo "[pre-commit] 全部通过"
+exit 0
