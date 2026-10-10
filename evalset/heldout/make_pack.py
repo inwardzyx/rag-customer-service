@@ -50,6 +50,23 @@ def _already_covered() -> set[tuple[str, str]]:
 ALREADY_COVERED = _already_covered()
 
 
+def _question_stats() -> tuple[int, int, int]:
+    """现有题库的 (总题数, answer 数, refuse 数) —— 同样从 questions.json 取。
+
+    ★ 为什么要抽出来：上一版把覆盖条款数改成了 `{len(ALREADY_COVERED)}` 动态算，
+      却把"20 题（15 answer + 5 refuse）"留成了手抄 —— 同一个提交里
+      一半动态一半手抄，改题量时头部会跟着变、正文不会。
+      这个坑与本文件顶部的 ALREADY_COVERED 是同一个，别再抄第三份。
+    """
+    qs = json.loads((ROOT / "evalset" / "questions.json").read_text(encoding="utf-8"))
+    a = sum(1 for q in qs if q.get("type") == "answer")
+    r = sum(1 for q in qs if q.get("type") == "refuse")
+    return len(qs), a, r
+
+
+N_Q, N_ANS, N_REF = _question_stats()
+
+
 def parse_doc(path: Path):
     """把一份 kb .md 拆成 [(条款名, 正文)]，顺手把元信息丢掉。"""
     text = path.read_text(encoding="utf-8")
@@ -196,14 +213,16 @@ def main():
 
 ## 出几道、出什么
 
-**目标：20 道**（约 14 道 answer + 6 道 refuse），
+**你要出的目标：20 道**（14 道 answer + 6 道 refuse —— ★ 这是**目标配比**，
+**不是**现有题库的配比，别拿它去对下面那句"现有"），
 再加 **5–8 道 multi-hop 边界题**（见下）。
 
-**优先从标`[未覆盖]` 的条款出题**——现有 20 题（15 answer + 5 refuse）
-只覆盖了 **{len(ALREADY_COVERED)} 个**条款，剩下 **{len(all_clauses) - len(ALREADY_COVERED)} 条**
-从来没被问过。
+**优先从标`[未覆盖]` 的条款出题**——现有题库共 **{N_Q} 题**
+（{N_ANS} answer + {N_REF} refuse，实时取自 `evalset/questions.json`），
+只覆盖了 **{len(ALREADY_COVERED)} 个**条款，剩下
+**{len(all_clauses) - len(ALREADY_COVERED)} 条**从来没被问过。
 
-### answer 题（14 道）
+### answer 题（14 道 —— 目标，非现有）
 
 覆盖尽量多的不同条款。`gold` 填 `[文件名, 条款名]`，照这个样子写：
 
@@ -227,7 +246,7 @@ PLACEHOLDER_ANSWER_EXAMPLE
 这类题如果你写不出确定的 gold，就写进 note 说明"这题我认为是跨条款的，
 但具体该引哪条我不确定"—— **这种诚实标注比硬填一个错 gold 有用得多**。
 
-### refuse 题（6 道）
+### refuse 题（6 道 —— 目标，非现有）
 
 选那些**校规压根没提**的事：场馆开放、食堂、宿舍熄灯、缴费、办证、补办、校历。
 `gold` 填 `null`，并填 `why_forced_to_refuse`。
