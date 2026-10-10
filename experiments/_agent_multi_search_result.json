@@ -1,0 +1,177 @@
+{
+  "q16": {
+    "question": "学费一年多少钱？",
+    "base_score": 3,
+    "base_refuse": true,
+    "agent_rounds": 3,
+    "agent_refuse": true,
+    "rescued": false,
+    "broke": false,
+    "trace": [
+      {
+        "round": 1,
+        "query": "学费一年多少钱？",
+        "top_doc": "专项补助管理办法.md｜第七条",
+        "score": 3,
+        "found": false,
+        "next_query": "本科生 学费标准 收费标准"
+      },
+      {
+        "round": 2,
+        "query": "本科生 学费标准 收费标准",
+        "top_doc": "专项补助管理办法.md｜第九条",
+        "score": 3,
+        "found": false,
+        "next_query": "学费 收费标准 每学年 元"
+      },
+      {
+        "round": 3,
+        "query": "学费 收费标准 每学年 元",
+        "top_doc": "专项补助管理办法.md｜第七条",
+        "score": 4,
+        "found": false,
+        "next_query": "学费 缴纳 标准 通知 财务处"
+      }
+    ]
+  },
+  "q20": {
+    "question": "学生证丢了怎么补办？",
+    "base_score": 0,
+    "base_refuse": true,
+    "agent_rounds": 3,
+    "agent_refuse": true,
+    "rescued": false,
+    "broke": false,
+    "trace": [
+      {
+        "round": 1,
+        "query": "学生证丢了怎么补办？",
+        "top_doc": "学生纪律处分管理规定.md｜第三章-第十条（八）",
+        "score": 0,
+        "found": false,
+        "next_query": "学生证 补办 流程 教务处"
+      },
+      {
+        "round": 2,
+        "query": "学生证 补办 流程 教务处",
+        "top_doc": "学生纪律处分管理规定.md｜第五章-第三十条",
+        "score": 1,
+        "found": false,
+        "next_query": "学生证 补办 申请表 学工处 办理指南"
+      },
+      {
+        "round": 3,
+        "query": "学生证 补办 申请表 学工处 办理指南",
+        "top_doc": "学生勤工助学管理办法.md｜第十条",
+        "score": 0,
+        "found": false,
+        "next_query": "学生证 遗失 补办 流程 教务处 学籍管理"
+      }
+    ]
+  },
+  "q15": {
+    "question": "图书馆几点关门？",
+    "base_score": 0,
+    "base_refuse": true,
+    "agent_rounds": 3,
+    "agent_refuse": true,
+    "rescued": false,
+    "broke": false,
+    "trace": [
+      {
+        "round": 1,
+        "query": "图书馆几点关门？",
+        "top_doc": "关于规范学生集体外出活动安全管理的规定（试行）.md｜第四条",
+        "score": 0,
+        "found": false,
+        "next_query": "图书馆 开放时间 闭馆时间"
+      },
+      {
+        "round": 2,
+        "query": "图书馆 开放时间 闭馆时间",
+        "top_doc": "关于规范学生集体外出活动安全管理的规定（试行）.md｜第四条",
+        "score": 0,
+        "found": false,
+        "next_query": "图书馆 开馆 闭馆 时间表 通知"
+      },
+      {
+        "round": 3,
+        "query": "图书馆 开馆 闭馆 时间表 通知",
+        "top_doc": "学生纪律处分管理规定.md｜第三章-第十条（一）",
+        "score": 1,
+        "found": false,
+        "next_query": "图书馆 开放时间 闭馆 通知 公告"
+      }
+    ]
+  },
+  "q17": {
+    "question": "食堂几点开饭？",
+    "base_score": 0,
+    "base_refuse": true,
+    "agent_rounds": 3,
+    "agent_refuse": true,
+    "rescued": false,
+    "broke": false,
+    "trace": [
+      {
+        "round": 1,
+        "query": "食堂几点开饭？",
+        "top_doc": "关于规范学生集体外出活动安全管理的规定（试行）.md｜第四条",
+        "score": 0,
+        "found": false,
+        "next_query": "食堂 开饭时间 营业时间"
+      },
+      {
+        "round": 2,
+        "query": "食堂 开饭时间 营业时间",
+        "top_doc": "关于规范学生集体外出活动安全管理的规定（试行）.md｜第四条",
+        "score": 0,
+        "found": false,
+        "next_query": "食堂 供餐时段 早餐 午餐 晚餐 时间"
+      },
+      {
+        "round": 3,
+        "query": "食堂 供餐时段 早餐 午餐 晚餐 时间",
+        "top_doc": "学生综合素质测评实施办法.md｜第六条",
+        "score": 0,
+        "found": false,
+        "next_query": "食堂 营业时间 开餐 时刻表"
+      }
+    ]
+  },
+  "q19": {
+    "question": "宿舍晚上几点熄灯？",
+    "base_score": 0,
+    "base_refuse": true,
+    "agent_rounds": 3,
+    "agent_refuse": true,
+    "rescued": false,
+    "broke": false,
+    "trace": [
+      {
+        "round": 1,
+        "query": "宿舍晚上几点熄灯？",
+        "top_doc": "学生纪律处分管理规定.md｜第三章-第十八条（一）",
+        "score": 0,
+        "found": false,
+        "next_query": "学生宿舍管理规定 作息时间 关门"
+      },
+      {
+        "round": 2,
+        "query": "学生宿舍管理规定 作息时间 关门",
+        "top_doc": "学生纪律处分管理规定.md｜第三章-第十八条（一）",
+        "score": 9,
+        "found": false,
+        "next_query": "宿舍 熄灯时间 作息制度 门禁"
+      },
+      {
+        "round": 3,
+        "query": "宿舍 熄灯时间 作息制度 门禁",
+        "top_doc": "学生纪律处分管理规定.md｜第三章-第十八条（一）",
+        "score": 8,
+        "found": false,
+        "next_query": "宿舍管理规定 作息时间 开关灯 就寝"
+      }
+    ]
+  }
+}
