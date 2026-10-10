@@ -89,7 +89,8 @@ def main():
     ap.add_argument("--with-llm", action="store_true",
                     help="在线层：用 rerank（产品默认），需 DEEPSEEK_API_KEY")
     ap.add_argument("--report", action="store_true",
-                    help="结果写入 evalset/report.md")
+                    help="结果写入 evalset/report-<层>.md（离线层/在线层分开，"
+                         "不互相覆盖——两层数字不可比，覆盖会让人误读）")
     args = ap.parse_args()
 
     os.environ.setdefault("LANGSMITH_TRACING", "false")
@@ -163,8 +164,14 @@ def main():
 
     logger.info(report)
     if args.report:
-        out = REPO_ROOT / "evalset" / "report.md"
-        out.write_text(report, encoding="utf-8")
+        # ★ 两层分文件，不共用一个 report.md。
+        #   原因：离线层拒 3/5、在线层拒 5/5，这两个数字**不可比**
+        #   （判据不同、指标不对称，见 run_eval.py 顶部 _OfflineLLM 注释）。
+        #   共用一个文件名时，跑完在线层就会把离线层的 3/5 覆盖掉，
+        #   而 README 和实验文档都在引用那个 3/5 —— 覆盖一次，文档就开始说谎。
+        layer = "rerank" if args.with_llm else "vector"
+        out = REPO_ROOT / "evalset" / f"report-{layer}.md"
+        out.write_text(report + "\n", encoding="utf-8")
         logger.info(f"已写入 {out}")
 
 
