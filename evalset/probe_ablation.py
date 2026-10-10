@@ -9,9 +9,10 @@ q12 在池=5 和池=10 里的位置【都是第 10 名】—— 它从来没变�
 
 而真正的三路消融给出了本项目最重要的一条负面结果：
 
-    15 题里 gold 进前 5 的题数：仅向量 14/15 · 仅 BM25 13/15 · RRF 融合 14/15
+    15 题里 gold 进前 5 的题数：仅向量 15/15 · 仅 BM25 14/15 · RRF 融合 15/15（2026-10-10 修复 q12 后）
 
-**"只用向量" 和 "RRF 融合" 打平，BM25 单独最差。** 差异全部出在 q12 这一题：
+**三条路已经区分不开了（只有 BM25 差 1 题）⇒ 评测集饱和，消融失去分辨力。**
+修复前的差异全部出在 q12 这一题（下面这组已过期，保留供对照）：
     · 向量路把它排第 7（进前 5）
     · BM25 路把它排第 80（捞不到）
     · RRF 融合排第 10（没进前 5）
@@ -68,13 +69,15 @@ def _contrib(krrf, rank):
 
 
 def ranked(query, krrf=60):
-    """返回按 RRF 排好序的候选列表（不截断）。"""
+    """返回按 RRF 排好序的候选列表（不截断）。
+
+    ★ 名次一律从 `svc.rag.route_orders()` 取，**不要在这里自己 embed / 自己分词**。
+      自己写一份 = 复制检索实现，生产改了前处理这里不会跟着改。
+      2026-10-10 就栽过：加了口语归一化后 run_eval 报 15/15，
+      而本探针仍报 q12 融合第 10 名 —— 因为这一步被绕过了。
+    """
     rag = svc.rag
-    q = np.array(list(rag.model.query_embed([query])), dtype="float32")[0]
-    vec_scores = rag.vectors @ q
-    vec_order = np.argsort(-vec_scores)
-    tokens = list(jieba.cut_for_search(query))
-    bm25_order = np.argsort(-rag.bm25.get_scores(tokens))
+    _, vec_scores, vec_order, bm25_order = rag.route_orders(query)
     rrf = {}
     for rank, idx in enumerate(vec_order):
         rrf[idx] = rrf.get(idx, 0.0) + _contrib(krrf, rank)
@@ -117,10 +120,9 @@ print("=== 补：向量单路 vs BM25 单路 vs 融合（真正的三路消融�
 for q in ANS:
     gold = tuple(q["gold"])
     rag = svc.rag
-    vec = np.array(list(rag.model.query_embed([q["question"]])), dtype="float32")[0]
-    vs = rag.vectors @ vec
-    v_rank = list(np.argsort(-vs))
-    b_rank = list(np.argsort(-rag.bm25.get_scores(list(jieba.cut_for_search(q["question"])))))
+    _, vs, v_order, b_order = rag.route_orders(q["question"])
+    v_rank = list(v_order)
+    b_rank = list(b_order)
     fused = ranked(q["question"])
 
     def pos_of(order_idx, chunks):
@@ -145,13 +147,13 @@ def count_in_top5(picker):
 
 def by_vec(q, gold):
     rag = svc.rag
-    vs = rag.vectors @ np.array(list(rag.model.query_embed([q["question"]])), dtype="float32")[0]
-    return gold in [(rag.chunks[i]["doc"], rag.chunks[i]["clause"]) for i in np.argsort(-vs)[:5]]
+    _, _, order, _ = rag.route_orders(q["question"])
+    return gold in [(rag.chunks[i]["doc"], rag.chunks[i]["clause"]) for i in order[:5]]
 
 def by_bm25(q, gold):
     rag = svc.rag
-    order = np.argsort(-rag.bm25.get_scores(list(jieba.cut_for_search(q["question"]))))[:5]
-    return gold in [(rag.chunks[i]["doc"], rag.chunks[i]["clause"]) for i in order]
+    _, _, _, order = rag.route_orders(q["question"])
+    return gold in [(rag.chunks[i]["doc"], rag.chunks[i]["clause"]) for i in order[:5]]
 
 def by_fused(q, gold):
     return gold in [(c["doc"], c["clause"]) for c, _ in ranked(q["question"])[:5]]

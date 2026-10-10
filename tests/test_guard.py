@@ -668,6 +668,51 @@ def test_real_corpus_gate_coverage_is_documented(rag):
 
 
 # ==================================================================
+# 检索前的口语归一化：只测【函数本身】，不测检索效果
+#   ★ 检索效果由 test_eval_set.py::test_recall_at_5 守 —— 两边分工，别重复测
+# ==================================================================
+def test_route_orders_is_the_single_retrieval_entry(rag):
+    """★ 两路排名必须只有 route_orders 一个入口 —— 否则探针会和生产量出两个答案。
+
+    实测起因：给检索加了口语归一化（礼拜→周）后，
+      `run_eval --report` → Recall@5 15/15
+      `probe_ablation.py`  → 仍报 q12 融合第 10 名
+    因为探针自己 embed + 自己分词，绕过了 search()。
+    这条把"归一化确实发生在共用入口里"钉成会红的事实。
+    """
+    norm, vec_scores, vec_order, bm25_order = rag.route_orders("我要请一个礼拜的假")
+    assert norm == "我要请一周的假", f"入口没做归一化：{norm!r}"
+    n = len(rag.chunks)
+    assert len(vec_scores) == n and len(vec_order) == n and len(bm25_order) == n, (
+        f"两路排名长度必须等于库大小 {n}，实际 "
+        f"{len(vec_scores)}/{len(vec_order)}/{len(bm25_order)}")
+
+
+def test_normalize_query_maps_colloquial_week():
+    """口语"礼拜"必须换成语料里的"周"。
+
+    根因（实测）：q12「我要请一个礼拜的假…」在库里找的是
+    `学生请销假制度.md｜总则-第三条`，而那条写的是「一周以内由二级学院审批」。
+    词表没对齐 ⇒ BM25 排第 80、向量第 7、RRF 融合第 10 ⇒ 掉出前 5。
+    """
+    assert svc.normalize_query("我要请一个礼拜的假") == "我要请一周的假"
+    assert svc.normalize_query("请一礼拜行吗") == "请一周行吗"
+    assert svc.normalize_query("礼拜三有课吗") == "周三有课吗"
+
+
+def test_normalize_query_leaves_other_text_alone():
+    """★ 反向判据：不含口语词的句子必须【一字不改】。
+
+    没有这条，一个 `return q.replace('礼拜','周')` 写歪成 `return '一周'`
+    也能把上面那条测绿 —— 那就成了"测试在装样子"。
+    """
+    for s in ("学校对学生的处分有哪几种？",
+              "请假一天以内由谁审批？",
+              "怎么申请助学贷款？"):
+        assert svc.normalize_query(s) == s, f"归一化动了不该动的字：{s!r}"
+
+
+# ==================================================================
 # 防漂移：体检脚本里"手抄的常量"必须和真值一致
 # ==================================================================
 def test_health_script_min_len_is_not_drifted():

@@ -301,6 +301,41 @@ def _version_key(v: str):
 
 
 # ==================================================================
+# ①.5 口语 → 制度语 归一化（★ 只作用于检索，不碰精排/生成的 prompt）
+# ==================================================================
+# ★ 为什么需要它：
+#   q12「我要请一个礼拜的假，需要哪一级批准？」在 263 块真实语料上稳定漏掉 ——
+#   学生说"一个礼拜"，而 `学生请销假制度.md｜总则-第三条` 写的是
+#   「一周以内由二级学院审批；一周以上由二级学院、学生工作处(部)、教务处审批」。
+#   · BM25 走字面：jieba 切出的"礼拜"在整库一次都不出现 ⇒ 该题 BM25 排第 80 名
+#   · 向量路只沾到一点语义 ⇒ 第 7 名
+#   · RRF 把两路【相加】⇒ 融合后排第 10 名，掉出前 5（粗捞池只有 5）
+#   ⇒ 病根是【词表没对齐】，不是融合公式错，也不是"混合检索没用"。
+#
+# ★ 纪律：这张表必须【极小 + 每条都能指到语料原文】。
+#   它是在同一套 15 题上量出来的（这套题既是调参集也是报数集），
+#   所以它证明的是"这个已知的口语差异被修掉了"，
+#   **不是**"系统对口语的泛化能力变好了"。后者要先有独立出题集（evalset/heldout/）。
+#   加新词之前先问：语料里那个词长什么样？答不出来就别加。
+_QUERY_NORMALIZE: tuple[tuple[str, str], ...] = (
+    ("一个礼拜", "一周"),   # 语料原文：一周以内由二级学院审批（请销假制度 总则-第三条）
+    ("一礼拜",   "一周"),   # 同上的省略写法
+    ("礼拜",     "周"),     # 兜底（"礼拜三"这类）
+)
+
+
+def normalize_query(q: str) -> str:
+    """把口语说法换成语料里的制度说法。
+
+    长的模式排在前面，否则"一个礼拜"会先被"礼拜"拆成"一个周"。
+    """
+    out = q
+    for src, dst in _QUERY_NORMALIZE:
+        out = out.replace(src, dst)
+    return out
+
+
+# ==================================================================
 # ② 全局资源：模型和库只在【服务启动时】加载一次
 #    ★ 这是服务化最重要的一条：绝不能在每个请求里重新加载模型！
 # ==================================================================
@@ -495,6 +530,26 @@ class RAG:
         kept = list(newest.values())
         return kept, rejected
 
+    def route_orders(self, query):
+        """两路检索的排名 —— **生产 search() 与三路消融探针共用这一个入口**。
+
+        ★ 为什么要抽出来：`evalset/probe_ablation.py` 原本自己 embed、自己分词，
+          复制了一份检索实现。2026-10-10 给检索加了口语归一化之后，
+          `run_eval --report` 报 Recall@5 15/15，而探针仍报 q12 融合第 10 名 ——
+          **因为探针绕过了 search()，拿不到那一步**。
+          这正是本项目反复踩的"两处各写一份判据"：改了一处，另一处照旧。
+          ⇒ 唯一入口就是这里，探针也必须从它取名次。
+
+        返回 (归一化后的 query, 向量分, 向量排名, BM25 排名)。
+        """
+        query = normalize_query(query)
+        q = np.array(list(self.model.query_embed([query])), dtype="float32")[0]
+        vec_scores = self.vectors @ q                       # 每块与问题的向量相似度
+        vec_order = np.argsort(-vec_scores)                 # 按分数从高到低的下标
+        tokens = list(jieba.cut_for_search(query))          # 中文按"检索粒度"分词
+        bm25_order = np.argsort(-self.bm25.get_scores(tokens))
+        return query, vec_scores, vec_order, bm25_order
+
     def search(self, query, k=5):
         """混合检索：向量（看意思）+ BM25（看字面），用 RRF 融合两路的排名
 
@@ -507,12 +562,8 @@ class RAG:
           用【名次】而不是【原始分数】，是因为向量分在 0~1 之间、BM25 分能到十几，
           直接相加的话 BM25 会把向量完全淹没 —— 不同量纲的分数不能相加，这是常见踩坑。
         """
-        q = np.array(list(self.model.query_embed([query])), dtype="float32")[0]
-        vec_scores = self.vectors @ q                       # 每块与问题的向量相似度
-        vec_order = np.argsort(-vec_scores)                 # 按分数从高到低的下标
-
-        tokens = list(jieba.cut_for_search(query))          # 中文按"检索粒度"分词
-        bm25_order = np.argsort(-self.bm25.get_scores(tokens))
+        # 口语归一化 + 两路排名都在 route_orders 里（探针走的是同一个入口）
+        _, vec_scores, vec_order, bm25_order = self.route_orders(query)
 
         rrf = {}
         for rank, idx in enumerate(vec_order):

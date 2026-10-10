@@ -173,7 +173,7 @@ ASSERTIONS: list[Assertion] = [
     ),
     Assertion(
         name="应答题总数与 Recall@5",
-        readme_value="14/15",
+        readme_value="15/15",
         src="evalset/report-vector.md",
         pattern=r"应答题数：(\d+)\s*Recall@5：(\d+)/(\d+)",
         expect=None,
@@ -233,8 +233,8 @@ def _check_refuse_rate() -> list[str]:
 
 def _check_recall() -> list[str]:
     """★ 洞3 修复（cc + DSH 独立同时抓到）：原版只读产物侧，
-    README 里的 14/15 改成 12/15 时脚本报"✓ 通过" —— 因为它
-    拿产物和【硬编码字面量 "14/15"】比，从不打开 README.md。
+    README 里的 15/15 改成 12/15 时脚本报"✓ 通过" —— 因为它
+    拿产物和【硬编码字面量】比，从不打开 README.md。
     ⇒ 现在必须两边都查。
     """
     errs: list[str] = []
@@ -246,16 +246,16 @@ def _check_recall() -> list[str]:
     if not m:
         return ["✗ 应答题 Recall@5：正则没匹配到，产物格式可能变了"]
     total, ok, den = m.group(1), m.group(2), m.group(3)
-    if f"{ok}/{den}" != "14/15":
-        return [f"✗ 应答题 Recall@5：产物是 {ok}/{den}，文档里写 14/15"]
+    if f"{ok}/{den}" != "15/15":
+        return [f"✗ 应答题 Recall@5：产物是 {ok}/{den}，文档里写 15/15"]
     if den != total:
         errs.append(f"⚠ Recall@5 分母 {den} != 应答题数 {total}")
     if rd.exists():
         hits = re.findall(r"(\d+)/(\d+)", rd.read_text(encoding="utf-8"))
         pairs = {f"{a}/{b}" for a, b in hits}
-        if "14/15" not in pairs:
+        if "15/15" not in pairs:
             errs.append(
-                "✗ 应答题 Recall@5：README 里找不到任何 x/15 形式且等于 14/15 的表述"
+                "✗ 应答题 Recall@5：README 里找不到任何 x/15 形式且等于 15/15 的表述"
                 "（可能已被改成别的数）"
             )
     return errs
