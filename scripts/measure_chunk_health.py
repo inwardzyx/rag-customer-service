@@ -110,10 +110,20 @@ class _CleanLogCollector(logging.Handler):
     ★ 为什么读 record.clean_op，而不是解析日志文案：
       解析文案 = 又一处"判据和被测对象不同源"，改个措辞就静默失效。
       loader 把动作写进 extra、体检 import 同一批常量 —— 两边同源。
+
+    ★★ level 为什么必须是 DEBUG（2026-10-10 改，这里踩过一次）：
+      loader 把逐条清洗明细降到了 DEBUG（正常路径不该刷 10 行 warning），
+      末尾汇总那一行仍是 WARNING。而这里如果保持默认的 WARNING 收，
+      清洗账会**整栏变成 0** —— 一份"全 0"的体检报告比没有更坏，
+      它看起来像"从来没动过刀"，实测却是丢了 4195 字。
+      （这个坑和 loader 里"体检脚本设了自己的 level"那句注释是同一件事的两面：
+       降级的一方要保证升级的那一方仍能看到。）
+      ⇒ 所以这里显式收 DEBUG，且下面挂 handler 后把 logger 本身也压到 DEBUG，
+         否则 logger 级别会把 DEBUG 记录挡在 handler 之前。
     """
 
     def __init__(self):
-        super().__init__(level=logging.WARNING)
+        super().__init__(level=logging.DEBUG)
         self.ops = {}                      # op -> {"n": 次数, "chars": 总字数, "values": [每个的 clean_chars]}
 
     def emit(self, record):
@@ -151,11 +161,16 @@ def main(argv):
 
     collector = _CleanLogCollector()
     loader_log = logging.getLogger("kb.loader")
+    # ★ 必须同时压 logger 本身：handler 收DEBUG 没用，logger 级别是 WARNING 的话
+    #   记录在到达 handler 之前就被挡掉了（实测：清洗账整栏变 0）。
+    _prev_level = loader_log.level
+    loader_log.setLevel(logging.DEBUG)
     loader_log.addHandler(collector)
     try:
         docs, errors = load_documents(DOCS_DIR)
     finally:
         loader_log.removeHandler(collector)
+        loader_log.setLevel(_prev_level)   #还原，别把调用方的日志级别改了
 
     # ★ 空库要早退：min()/max() 对空序列是**抛异常**（不是返回 None —— 和 sum([]) 返回 0
     #   不一样，这俩常被记混）。一个专门回答"数据层健康吗"的脚本，恰好在答案是
@@ -243,11 +258,30 @@ def main(argv):
 
     # ---------- 清洗账 ----------
     print("\n【清洗账】加载时动过的刀（不可逆 —— 这几个数应该长期稳定）")
-    if not collector.ops:
+    #★★ 自检：明细收不到就【报错】，不许安静地打「没动过刀」。
+    #   这个坑实测踩过：loader 把明细降到 DEBUG 后，collector 没跟着降级别，
+    #   清洗账整栏变成 0 —— 而"0块 0 字"读起来和"确实没动过刀"一模一样。
+    #   而事实上那次丢了 4195 字。**一份骗人的体检报告比没有体检更坏**，
+    #   因为它会把"探头失灵"读成"数据干净"。
+    #   判据用【期望非零】而不是"只要有记录就行"：真实语料必然有截断/剥页脚，
+    #   全 0 就等于探头失灵，这个假设由下面的 EXPECTED_CLEAN_OPS 承担。
+    EXPECTED_CLEAN_OPS = (CLEAN_OP_FOOTER, CLEAN_OP_TRUNCATE)
+    blind = [op for op in EXPECTED_CLEAN_OPS if not collector.ops.get(op)]
+    if blind:
+        print("  ⚠⚠ 探头失灵：以下动作一条明细都没收到，但真实语料必然发生它们——")
+        for op in blind:
+            print("      %s（loader 打在 DEBUG 级，collector 没收到）" % op)
+        print("      ⇒ 下面的 0 是【假的】，不要当成'没动过刀'。")
+        print("      修法：确认 _CleanLogCollector 是 DEBUG 级，且 logger 本身被压到 DEBUG。")
+        blind_ops = True
+    else:
+        blind_ops = False
         print("  （没动过刀）")
     for op in (CLEAN_OP_FOOTER, CLEAN_OP_TRUNCATE, CLEAN_OP_PREAMBLE):
         slot = collector.ops.get(op, {"n": 0, "chars": 0})
-        print("  %s：%d 块，共 %d 字" % (op, slot["n"], slot["chars"]))
+        print("  %s：%d 块，共 %d 字%s"
+              % (op, slot["n"], slot["chars"],
+                 "⚠ 失灵" if (blind_ops and op in blind) else ""))
     print("  ★ 哪天这里的数字变了，就是清洗规则又被动了 —— 这是全绿快照给不了的信息。")
 
     # ---------- 每个文档 ----------
@@ -269,6 +303,10 @@ def main(argv):
     # ---------- 结论 ----------
     bad = [(name, n) for name, ok, n in checks if not ok]
     print("\n" + "=" * 70)
+    # ★ blind_ops（探头失灵）也算 bad —— 体检工具自己坏了，
+    #   却返回 0 说"没查到问题"，这是最坏的一种失败。
+    if blind_ops:
+        print("结论：★ 体检工具自身失灵（清洗账探头收不到明细），本次结果【不可信】。")
     if bad:
         print("结论：%d 项没通过 —— %s"
               % (len(bad), "；".join("%s（%d）" % (name, n) for name, n in bad)))
@@ -277,7 +315,7 @@ def main(argv):
         print("      （注意这只说明「没有已知类型的病」，不等于「语料够用」——")
         print("        语料规模的天花板见 README 的「🔒 数据边界」一节）")
     print("=" * 70)
-    return 0 if not bad else 1
+    return 0 if (not bad and not blind_ops) else 1
 
 
 if __name__ == "__main__":

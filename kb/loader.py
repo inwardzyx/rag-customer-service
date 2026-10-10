@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import collections
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -53,7 +55,40 @@ CHROME_WEAK = ("上一篇", "下一篇", "欢迎访问", "联系我们", "党政
 #   体检脚本 import 这几个常量 → 两边同源，改名字会一起改。
 CLEAN_OP_FOOTER = "剥离网页页脚"
 CLEAN_OP_TRUNCATE = "截断丢字"
-CLEAN_OP_PREAMBLE = "丢弃 ## 前的正文"
+CLEAN_OP_PREAMBLE = "丢弃第一个 ## 之前的正文"
+
+# ★★ 逐条明细打DEBUG、汇总打 WARNING（2026-10-10 改，原因见下）
+#
+#   改之前：每条被清洗的块各打一行 warning。
+#   实测：263 块的库里一次加载刷 10+ 行 —— 截断 8 条、剥页脚 2 条。
+#   问题不是"报了"，而是【正常路径上的数据清洗本来就天天发生】，
+#   把它报成 warning，等于每次都喊一遍"出事了"，狼来了。
+#   pytest 里更糟：每次跑测试都刷一遍，没人看。
+#
+#   改之后：
+#     · 逐条明细 → logger.debug（要看时开DEBUG 级日志，一行不少）
+#     · 末尾一行汇总 → logger.warning，把本次动了几刀、丢多少字讲清楚
+#   ⇒ 【不静默的承诺没有削弱】：丢字数和涉及哪些块仍然全部可查，
+#     而且比刷 10 行更好读 —— 一行就能回答"这次入库有没有丢东西、丢在哪"。
+#
+#   ★ 为什么汇总必须带 clean_op 之外的字段：
+#     measure_chunk_health.py 读的是【每一条】的 clean_chars（从 extra 里拿），
+#     汇总行只是给人看的，不能替代逐条 extra，否则体检脚本的判据就断了。
+QUIET_CLEAN_DETAIL = os.environ.get("RAG_QUIET_CLEAN") != "0"
+
+
+def _log_clean_detail(msg, *args, **kw) -> None:
+    """打一条【清洗明细】。
+
+    默认走 DEBUG（一行一条），RAG_QUIET_CLEAN=0 时退回 WARNING。
+    留这个开关的原因：调试某份文档为什么被切短时，
+    需要"逐条都打出来"这个模式，而不必去改代码再改回来。
+
+    ★ extra 字段照旧挂在这条日志上，不管它落在哪个级别 ——
+      scripts/measure_chunk_health.py 装了一个 handler 专门收集它们，
+      级别降低不等于收集不到（它自己设level，见该文件）。
+    """
+    logger.log(logging.DEBUG if QUIET_CLEAN_DETAIL else logging.WARNING, msg, *args, **kw)
 
 # 只有当页脚尾巴达到一定长度才切，避免正文里偶然出现"联系我们"就被削掉。
 # 30 字是拍的，但很保守：真页脚动辄上百字，而误伤代价是真条文被削。
@@ -143,6 +178,10 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
     root = Path(root)
     docs: list[dict] = []
     errors: list[str] = []
+    # 本次加载的清洗账：{操作: 次数} 和 {操作: 累计丢字数}，
+    # 末尾汇成一行 warning 报出去（逐条明细见 _log_clean_detail 的注释）
+    _clean_stats: dict[str, int] = collections.defaultdict(int)
+    _clean_chars: dict[str, int] = collections.defaultdict(int)
 
     entries = sorted(
         root.rglob("*.md"),
@@ -179,9 +218,11 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
         #   真实语料这里只有空行（实测 3 个文件 head 全是 0 字），所以今天丢的是 0 字。
         head = sections[0].strip()
         if head:
-            logger.warning("「%s」第一个 ## 之前有 %d 字正文，不属于任何条款，已丢弃：%r",
-                           meta["doc"], len(head), head[:30],
-                           extra={"clean_op": CLEAN_OP_PREAMBLE, "clean_chars": len(head)})
+            _log_clean_detail("「%s」第一个 ## 之前有 %d 字正文，不属于任何条款，已丢弃：%r",
+                              meta["doc"], len(head), head[:30],
+                              extra={"clean_op": CLEAN_OP_PREAMBLE, "clean_chars": len(head)})
+            _clean_stats[CLEAN_OP_PREAMBLE] += 1
+            _clean_chars[CLEAN_OP_PREAMBLE] += len(head)
 
         for sec in sections[1:]:                       # 按「行首 ## 」切成一条条条款
             clause, _, content = sec.partition("\n")
@@ -194,9 +235,11 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             content, stripped = strip_footer(content)
             if stripped:
                 # 不静默清洗：剥了多少、哪一条，必须看得见（和下面截断是同一个道理）
-                logger.warning("「%s｜%s」剥离网页页脚 %d 字（剩 %d 字正文）",
-                               meta["doc"], clause.strip(), stripped, len(content),
-                               extra={"clean_op": CLEAN_OP_FOOTER, "clean_chars": stripped})
+                _log_clean_detail("「%s｜%s」剥离网页页脚 %d 字（剩 %d 字正文）",
+                                  meta["doc"], clause.strip(), stripped, len(content),
+                                  extra={"clean_op": CLEAN_OP_FOOTER, "clean_chars": stripped})
+                _clean_stats[CLEAN_OP_FOOTER] += 1
+                _clean_chars[CLEAN_OP_FOOTER] += stripped
 
             # ★ 超长不再静默截断：丢了多少字要报出来。
             #   为什么现在【不】改成"切成多块"：剥完页脚后全库超长块是 0 个，
@@ -208,11 +251,13 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
             #   （另：就算这里不截，bge-small-zh 也有 512 token 上限，
             #    会在 embedding 里把尾巴悄悄吃掉 —— 所以截断这道保护不能整个撤掉。）
             if len(content) > max_chars:
-                logger.warning("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）",
-                               meta["doc"], clause.strip(), len(content),
-                               max_chars, len(content) - max_chars,
-                               extra={"clean_op": CLEAN_OP_TRUNCATE,
-                                      "clean_chars": len(content) - max_chars})
+                _log_clean_detail("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）",
+                                  meta["doc"], clause.strip(), len(content),
+                                  max_chars, len(content) - max_chars,
+                                  extra={"clean_op": CLEAN_OP_TRUNCATE,
+                                         "clean_chars": len(content) - max_chars})
+                _clean_stats[CLEAN_OP_TRUNCATE] += 1
+                _clean_chars[CLEAN_OP_TRUNCATE] += len(content) - max_chars
                 content = content[:max_chars]
 
             docs.append({
@@ -222,4 +267,14 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
                 "source": meta["source"],
                 "text": content,
             })
+
+    # ★ 一行汇总代替逐条 warning（逐条明细已降级到 DEBUG，见 QUIET_CLEAN_DETAIL）
+    #   汇总里【必带总丢字数】——"动了几刀"看不出严重性，
+    #   "丢了 5241 字"和"丢了 0 字"是两件完全不同的事。
+    if _clean_stats:
+        parts = [f"{op} {n} 处（丢 {chars} 字）"
+                 for op, n in _clean_stats.items()
+                 for chars in (_clean_chars.get(op, 0),)]
+        logger.warning("加载时清洗了 %d 块：%s", sum(_clean_stats.values()),
+                       "、".join(parts))
     return docs, errors
