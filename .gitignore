@@ -35,3 +35,6 @@ Thumbs.db
 cc_*.md
 cc_*.log
 CLAUDE.md
+
+# 黑板原始日志（含 CLI 噪音，不进仓库；结论 _reviews/*.md 保留）
+_reviews/_*.log

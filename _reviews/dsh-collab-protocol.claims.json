@@ -1,0 +1,58 @@
+{
+  "reviewer": "dsh",
+  "task": "collab-protocol",
+  "claims": [
+    {
+      "id": "C1",
+      "type": "fact",
+      "anchor": "kb/loader.py:274-279",
+      "statement": "全库加载时截断丢字 8 处、丢 4195 字（这是 README 与两份评审都在引用的数字）",
+      "cmd": "D:\\Python-project\\.venv\\Scripts\\python.exe _tasks/probes/corpus_stats.py",
+      "expected": "截断丢字 8 处（丢 4195 字）",
+      "status": "green",
+      "actual": "截断丢字 8 处（丢 4195 字）\n剥离网页页脚 2 处（丢 563 字）\nALREADY_COVERED 10 == gold 去重 10"
+    },
+    {
+      "id": "C2",
+      "type": "fact",
+      "anchor": "evalset/heldout/make_pack.py:50-72",
+      "statement": "make_pack 的 ALREADY_COVERED 恒等于 questions.json 的 answer-gold 去重集合（今晚修的那条判据）",
+      "cmd": "D:\\Python-project\\.venv\\Scripts\\python.exe _tasks/probes/corpus_stats.py",
+      "expected": "ALREADY_COVERED 10 == gold 去重 10",
+      "status": "green",
+      "actual": "截断丢字 8 处（丢 4195 字）\n剥离网页页脚 2 处（丢 563 字）\nALREADY_COVERED 10 == gold 去重 10"
+    },
+    {
+      "id": "C3",
+      "type": "judgment",
+      "anchor": "D:\\dsh-work\\_out_collab_protocol.md vs _review_rag-cs\\_tasks\\",
+      "statement": "两套派活协议并存（dsh-work/_out_*.md 与 仓库/_tasks+_reviews）会让『派过盲审』不可核",
+      "would_flip_if": "如果 dispatch.sh 能同时写 _reviews/ 并把 session-id 落盘，两套就等价了 —— 那时这条降级为偏好"
+    }
+  ],
+  "blind_spots": [
+    {
+      "claim_id": "C4",
+      "need": "WorkBuddy 的模型配置与能力清单（能否碰 CI/远端/账单）",
+      "obtain_by": "问用户，或找 WorkBuddy 的配置文件",
+      "verdict_if_missing": "hold"
+    }
+  ],
+  "searched": [
+    "_tasks/dispatch.sh、_tasks/TEMPLATE.md、_reviews/README.md、_reviews/*-readme-table.md",
+    "kb/loader.py、evalset/heldout/make_pack.py、~/.dsh/settings.yaml、~/.claude/settings.json"
+  ],
+  "snapshot": {
+    "README.md": {
+      "sha256": "66f2447e49317a18",
+      "bytes": 94005,
+      "mtime": "2026-10-10 16:43:03"
+    },
+    "evalset/heldout/source_policy.md": {
+      "sha256": "af85cc1699443754",
+      "bytes": 106336,
+      "mtime": "2026-10-10 18:31:41"
+    }
+  },
+  "pinned_at": "2026-10-10 18:38:21"
+}
