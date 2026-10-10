@@ -52,7 +52,7 @@ def test_load_documents_counts():
     #   构成：纪律处分 61 + 请销假 7 + 8 份新制度 205 + inbox 抓取残留 15 = 288？
     #   实测 286 —— 差值来自新制度里3 块被"完全重复/近似重复"关拦下（见 test_guard）。
     #   注意：这里返回的是「解析出的全部原始块」，还没过入库把关；
-    #   过完关后才会变成 268 留 18 拦（那条断言在 test_guard.py::test_kept_count_matches_real_corpus）。
+    #   过完关后才会变成 263 留 23 拦（那条断言在 test_guard.py::test_kept_count_matches_real_corpus）。
     assert len(docs) == 286, f"解析出 {len(docs)} 条，应为 286 条"
     assert errors == [], f"不应有解析失败的文件：{errors}"
 

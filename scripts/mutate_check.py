@@ -79,26 +79,31 @@ MUTATIONS = [
         "why": "模拟「标题漏空格就整篇消失」—— 文档产出 0 块却没有任何报错",
     },
     {
-        "name": "导语丢弃不吭声（warning 降级）",
+        # ★ 2026-10-10 重定向：明细行已改名 `_log_clean_detail` 并【默认走 DEBUG】
+        #   （kb/loader.py:77-91），"把 warning 降成 debug"这个变异已不再模拟任何风险。
+        #   现在保命的是末尾那行【汇总 warning】，所以变异点移到汇总的拼装上。
+        "name": "导语丢弃不进汇总（丢了内容却不说）",
         "file": "kb/loader.py",
-        "anchor": '            logger.warning("「%s」第一个 ## 之前有 %d 字正文',
-        "mutant": '            logger.debug("「%s」第一个 ## 之前有 %d 字正文',
+        "anchor": "                 for op, n in _clean_stats.items()",
+        "mutant": "                 for op, n in _clean_stats.items() if op != CLEAN_OP_PREAMBLE",
         "test": "tests/test_loader.py::test_preamble_before_first_heading_is_reported",
         "why": "模拟「悄悄丢内容」—— 和 content[:400] 截断是同一个病",
     },
     {
-        "name": "页脚剥离不吭声（warning 降级）",
+        # ★ 2026-10-10 重定向，理由同上一条。
+        "name": "页脚剥离不进汇总（削了正文却不说）",
         "file": "kb/loader.py",
-        "anchor": '                logger.warning("「%s｜%s」剥离网页页脚 %d 字',
-        "mutant": '                logger.debug("「%s｜%s」剥离网页页脚 %d 字',
+        "anchor": "                 for op, n in _clean_stats.items()",
+        "mutant": "                 for op, n in _clean_stats.items() if op != CLEAN_OP_FOOTER",
         "test": "tests/test_loader.py::test_strip_is_not_silent",
         "why": "★ 上一次真实漏网过的那个 —— 改完 48 条测试全绿，等于又造了一个静默清洗",
     },
     {
-        "name": "截断不吭声（warning 降级）",
+        # ★ 2026-10-10 重定向，理由同上一条。
+        "name": "截断不进汇总（丢字不报）",
         "file": "kb/loader.py",
-        "anchor": '                logger.warning("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）"',
-        "mutant": '                logger.debug("「%s｜%s」长 %d 字，超过 max_chars=%d，已截断（丢 %d 字）"',
+        "anchor": "                 for op, n in _clean_stats.items()",
+        "mutant": "                 for op, n in _clean_stats.items() if op != CLEAN_OP_TRUNCATE",
         "test": "tests/test_loader.py::test_truncation_is_not_silent",
         "why": "模拟最初的病：丢字不报，谁也不知道库里少了几百字",
     },

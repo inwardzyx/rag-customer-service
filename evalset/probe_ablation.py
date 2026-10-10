@@ -146,7 +146,8 @@ def by_bm25(q, gold):
 def by_fused(q, gold):
     return gold in [(c["doc"], c["clause"]) for c, _ in ranked(q["question"])[:5]]
 
+N = len(ANS)   # ★ 分母自动取应答集长度：写死 /14 在 q18 变成 answer 后会打出 15/14
 print()
-print(f"14 题里 gold 进前 5 的题数："
-      f"仅向量 {count_in_top5(by_vec)}/14 · 仅 BM25 {count_in_top5(by_bm25)}/14 "
-      f"· RRF 融合 {count_in_top5(by_fused)}/14")
+print(f"{N} 题里 gold 进前 5 的题数："
+      f"仅向量 {count_in_top5(by_vec)}/{N} · 仅 BM25 {count_in_top5(by_bm25)}/{N} "
+      f"· RRF 融合 {count_in_top5(by_fused)}/{N}")
