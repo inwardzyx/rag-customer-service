@@ -82,20 +82,46 @@ def load_questions(path=None):
     return data
 
 
+_REWRITE_CACHE: dict[str, str] = {}
+
+
+def retrieval_query(q):
+    """产品实际拿去检索的那句话 —— **必须含 chat() 里做的那次查询改写**。
+
+    ★ 第一版这里直接用 q["question"]，于是"开/关改写"在 Recall@5 上看不出任何差别。
+      可它其实把 held-out 的漏答率从 5/44 降到了 0/44。
+      ⇒ 指标走的不是产品那条路，就是在骗自己。
+    ★ 加缓存：recall_gold 与 chat() 都要用改写结果，不缓存会每道题改写两次。
+    ★ `USE_REWRITE` 定义在本函数【下面】没关系 —— Python 的全局名在调用时解析。
+    """
+    if not (USE_REWRITE and svc.rag.ready):
+        return q["question"]
+    if q["id"] not in _REWRITE_CACHE:
+        try:
+            _REWRITE_CACHE[q["id"]] = svc.rag.rewrite_query(q["question"])
+        except Exception:
+            _REWRITE_CACHE[q["id"]] = q["question"]
+    return _REWRITE_CACHE[q["id"]]
+
+
 def recall_gold(q, k=5):
     """gold 条款是否进粗捞前 k。直接用 rag.search()，不拿 /chat 的 sources。"""
-    cands = svc.rag.search(q["question"], k=k)
+    cands = svc.rag.search(retrieval_query(q), k=k)
     recalled = {(c["doc"], c["clause"]) for c, _ in cands}
     return tuple(q.get("gold") or []) in recalled
 
 
 def top_vec_score(q, k=5):
-    cands = svc.rag.search(q["question"], k=k)
+    cands = svc.rag.search(retrieval_query(q), k=k)
     return max((s for _, s in cands), default=0.0)
 
 
+USE_REWRITE = True          # 由 --no-rewrite 置 False（见 main）
+
+
 def knowledge_hit(q, with_llm):
-    resp = svc.chat(svc.ChatRequest(question=q["question"], use_rerank=with_llm))
+    resp = svc.chat(svc.ChatRequest(question=q["question"], use_rerank=with_llm,
+                                    use_rewrite=USE_REWRITE if with_llm else False))
     return resp.knowledge_hit
 
 
@@ -108,10 +134,16 @@ def main():
                          "不互相覆盖——两层数字不可比，覆盖会让人误读）")
     ap.add_argument("--questions", default=None,
                     help="题目文件（默认 evalset/questions.json）。跑 held-out 时指向它")
+    ap.add_argument("--no-rewrite", action="store_true",
+                    help="关掉 LLM 查询改写（默认在线层开启、离线层关闭；"
+                         "用它做 A/B 对照）")
     ap.add_argument("--label", default=None,
                     help="报告名后缀：report-<层>-<label>.md。"
                          "★ 用 --questions 时必须给，否则会覆盖主评测集的报告")
     args = ap.parse_args()
+
+    global USE_REWRITE
+    USE_REWRITE = not args.no_rewrite
 
     if args.questions and not args.label:
         ap.error("--questions 必须和 --label 一起用：否则写出的报告会覆盖主评测集的 "

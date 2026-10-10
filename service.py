@@ -335,6 +335,22 @@ def normalize_query(q: str) -> str:
     return out
 
 
+# ★ 查询改写用的 prompt —— 与 normalize_query() 是同一个目的的**两级**：
+#   那张手抄同义词表零成本、确定性，但只覆盖我想到的说法（礼拜→周）；
+#   模型改写能处理没想到的，代价是每次查询多一次调用。
+#   ★ 这个 prompt 里**不许出现任何评测题**，否则就是把 held-out 变成调参集。
+REWRITE_PROMPT = """把下面这句学生的口语问题，改写成**学校规章制度里会用的说法**，用于检索。
+
+要求：
+1. 只输出改写后的一句话，不要解释、不要引号、不要编号。
+2. 保留原问题的**意图和关键限定**（时间、对象、金额、情形都不能丢）。
+3. 把口语词换成制度用语（例："一个礼拜"→"一周"；"翘课"→"旷课"；"直接开掉"→"开除学籍"）。
+4. 如果原句已经很书面，就原样返回，别画蛇添足。
+
+学生的问题：{q}
+改写后："""
+
+
 # ==================================================================
 # ② 全局资源：模型和库只在【服务启动时】加载一次
 #    ★ 这是服务化最重要的一条：绝不能在每个请求里重新加载模型！
@@ -530,6 +546,27 @@ class RAG:
         kept = list(newest.values())
         return kept, rejected
 
+    def rewrite_query(self, q: str) -> str:
+        """把口语问题改写成制度用语 —— **只用于检索**。
+
+        ★ 为什么需要它（held-out 实测，不是猜的）：
+          44 道应答题上只做**一次**改写，就有 7 道从"捞不到"变成"捞到"、0 道被弄坏
+          （McNemar p=0.0156）；Recall@5 从 35/44 提到 42/44。
+          修好的里面包括 h8（勤工助学每月工时）与 h23（处分 × 奖助学金）——
+          这两道连"换更大的 embedding 模型"都救不回来
+          （见 evalset/heldout/RESULTS.md 三之补三）。
+        ★ 与 normalize_query() 的分工：那张表零成本、确定，但只覆盖我想到的说法；
+          改写处理没想到的。两级串联：先过表，再让模型改写。
+        ★ 代价：每次查询多一次模型调用。失败时**退回原问题**（产品不该因此不答）。
+          ——注意这个兜底只适合产品；探针里兜底会把"探针坏了"伪装成"改写没用"。
+        """
+        resp = _invoke_llm(self.llm, [HumanMessage(content=REWRITE_PROMPT.format(q=q))]).content
+        out = (resp or "").strip().strip('"').strip()
+        if not out or len(out) > 120:          # 模型跑偏（空 / 超长）→ 不用它
+            logger.warning("查询改写结果异常（长度 %d），本次用原问题检索", len(out))
+            return q
+        return out
+
     def route_orders(self, query):
         """两路检索的排名 —— **生产 search() 与三路消融探针共用这一个入口**。
 
@@ -665,6 +702,9 @@ class ChatRequest(BaseModel):
     question: str = Field(..., description="用户的问题", min_length=1, max_length=500)
     top_k: int = Field(5, description="粗捞几条", ge=1, le=10)
     use_rerank: bool = Field(True, description="是否启用 rerank 精排")
+    # ★ None = 跟着 use_rerank 走（见 chat() 里的说明）：
+    #   产品默认路径（rerank）本来就要调模型；离线路径不许偷偷调模型。
+    use_rewrite: bool | None = Field(None, description="是否用 LLM 改写检索查询（None=跟着 use_rerank）")
 
 
 class Source(BaseModel):
@@ -711,7 +751,20 @@ def chat(req: ChatRequest):
         return {"answer": "服务还在加载模型，请稍等几秒再试", "sources": [],
                 "took_ms": 0, "rerank_used": False}
 
-    cands = rag.search(req.question, k=req.top_k)
+    # ★ 查询改写：把"学生怎么说"翻译成"制度怎么写"，**只用于检索**。
+    #   精排与生成看到的仍是 req.question（用户原话）—— 答的是他真正问的问题。
+    use_rewrite = req.use_rewrite if req.use_rewrite is not None else req.use_rerank
+    search_q = req.question
+    if use_rewrite:
+        try:
+            search_q = rag.rewrite_query(req.question)
+            if search_q != req.question:
+                logger.info("检索查询已改写：%r → %r", req.question, search_q)
+        except LLMCallError as e:
+            # 降级不崩：改写挂了就用原问题检索 —— 绝不因此拒答
+            logger.warning("查询改写不可用（%s），本次用原问题检索", e)
+
+    cands = rag.search(search_q, k=req.top_k)
 
     took = lambda: int((time.time() - t0) * 1000)          # 匿名函数，算"到现在用了多少毫秒"
 
