@@ -1,0 +1,106 @@
+[
+  {
+    "id": "q9",
+    "question": "考试作弊要受什么处分？",
+    "first_rank": 6,
+    "trace": [
+      {
+        "round": 1,
+        "query": "考试作弊要受什么处分？",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": true,
+        "next_query": ""
+      }
+    ],
+    "best_gold_rank": null,
+    "best_prefix_rank": null,
+    "rescued": false
+  },
+  {
+    "id": "q10",
+    "question": "第二次考试作弊会被开除学籍吗？",
+    "first_rank": 8,
+    "trace": [
+      {
+        "round": 1,
+        "query": "第二次考试作弊会被开除学籍吗？",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": true,
+        "next_query": ""
+      }
+    ],
+    "best_gold_rank": null,
+    "best_prefix_rank": null,
+    "rescued": false
+  },
+  {
+    "id": "q11",
+    "question": "请假一天以内由谁审批？",
+    "first_rank": 11,
+    "trace": [
+      {
+        "round": 1,
+        "query": "请假一天以内由谁审批？",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": false,
+        "next_query": "准假权限 请假一天 审批人"
+      },
+      {
+        "round": 2,
+        "query": "准假权限 请假一天 审批人",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": false,
+        "next_query": "请假审批权限 一天以内 班主任 辅导员 审批"
+      },
+      {
+        "round": 3,
+        "query": "请假审批权限 一天以内 班主任 辅导员 审批",
+        "gold_rank": null,
+        "prefix_rank": 1,
+        "found": false,
+        "next_query": "请假审批权限 一天以内 审批人"
+      }
+    ],
+    "best_gold_rank": null,
+    "best_prefix_rank": 1,
+    "rescued": true
+  },
+  {
+    "id": "q12",
+    "question": "我要请一个礼拜的假，需要哪一级批准？",
+    "first_rank": null,
+    "trace": [
+      {
+        "round": 1,
+        "query": "我要请一个礼拜的假，需要哪一级批准？",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": false,
+        "next_query": "请假审批权限 请假一周 批准 二级学院 学生处"
+      },
+      {
+        "round": 2,
+        "query": "请假审批权限 请假一周 批准 二级学院 学生处",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": false,
+        "next_query": "学生请假 一周 准假权限 审批 规定"
+      },
+      {
+        "round": 3,
+        "query": "学生请假 一周 准假权限 审批 规定",
+        "gold_rank": null,
+        "prefix_rank": null,
+        "found": false,
+        "next_query": "请假 一周 审批 权限 分级 学生 准假 天数"
+      }
+    ],
+    "best_gold_rank": null,
+    "best_prefix_rank": null,
+    "rescued": false
+  }
+]
