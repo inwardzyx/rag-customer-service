@@ -5,7 +5,7 @@
     D:\\Python-project\\.venv\\Scripts\\python.exe evalset\\heldout\\make_pack.py
 
 产出三个文件（都在 evalset/heldout/ 下）：
-    1. source_policy.md——【给题目作者看的】两篇校规原文，按条款排版，
+    1. source_policy.md——【给题目作者看的】全库校规原文（docs/kb 下全部现行制度），按条款排版，
        **不含任何 chunk / 向量 / 检索信息**，也不含现有 20 题的任何痕迹。
     2. questions_template.json —— 空模板，题目作者填 question / type / gold /
        why_forced_to_refuse / note 五个字段。
@@ -26,25 +26,28 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = Path(__file__).resolve().parent
 KB = ROOT / "docs" / "kb"
 
-# 出题时要避开的条款：现有 20 题已经覆盖了这些，
-# held-out 应该去打那59 块零覆盖的地方（README:639 记的 87%）。
-ALREADY_COVERED = {
-    ("学生纪律处分管理规定.md", "第二章-第四条"),
-    ("学生纪律处分管理规定.md", "第二章-第六条"),
-    ("学生纪律处分管理规定.md", "第二章-第七条"),
-    ("学生纪律处分管理规定.md", "第三章-第二十四条"),
-    ("学生纪律处分管理规定.md", "第三章-第九条"),
-    ("学生纪律处分管理规定.md", "第三章-第十一条"),
-    ("学生请销假制度.md", "总则-第三条"),
-    ("学生请销假制度.md", "总则-第四条"),
-    ("学生请销假制度.md", "总则-第六条"),
-}
+# 出题时要避开的条款：**直接从现有 questions.json 取 gold**（单一真源）。
+# ★ 这里以前是手抄的 9 条，q18 从 refuse 改成 answer 之后没跟上 ——
+#   「学生资助工作实施办法.md｜第十五条」会被标成 [未覆盖]，
+#   出题人于是优先给它出题，造出一道和现有题重复的题，这套 held-out 当场贬值。
+#   ⇒ 判据与真源同源：改 questions.json，这里自动跟着改。
+#     （这个仓库反复踩过"两处各写一份判据"的坑，见 loader 与体检脚本那对常量。）
+def _already_covered() -> set[tuple[str, str]]:
+    p = ROOT / "evalset" / "questions.json"
+    qs = json.loads(p.read_text(encoding="utf-8"))
+    got = {(q["gold"][0], q["gold"][1]) for q in qs if q.get("gold")}
+    assert len(got) >= 10, f"只从 questions.json 读到 {len(got)} 条 gold，去看一眼格式"
+    return got
+
+
+ALREADY_COVERED = _already_covered()
 
 
 def parse_doc(path: Path):
@@ -79,7 +82,11 @@ def main():
     lines = [
         "# 校规原文（出题底本）",
         "",
-        "> 这两份文件是**知识库的原始来源**。你的任务是假装你只懂学校规矩、",
+        f"> ★ 生成时间 {datetime.now():%Y-%m-%d %H:%M}"
+        f"；来源 docs/kb 下 {len(docs)} 份现行制度，共 {len(all_clauses)} 条"
+        f"；其中 {len(uncovered)} 条现有评测集没覆盖。",
+        "",
+        "> 这些文件是**知识库的原始来源**。你的任务是假装你只懂学校规矩、",
         "> 从来没见过这个 RAG 系统，然后像真实学生那样提问。",
         "",
         "> ⚠️ **不要去仓库里看 `evalset/questions.json`**（现有 20 题）。",
@@ -139,7 +146,7 @@ def main():
 
 ### 1. 只看 `source_policy.md`，不要去看仓库
 
-`source_policy.md` 是两篇校规原文。**这是你唯一该看的材料。**
+`source_policy.md` 是全库 {len(docs)} 份现行制度的原文。**这是你唯一该看的材料。**
 
 -❌ 不要打开 `evalset/questions.json`（现有 20 题）
 - ❌ 不要打开 `docs/` 或 `kb/` 目录（那是切好的 chunk，看了会泄漏措辞）
@@ -161,12 +168,29 @@ def main():
 
 ### 3. 每道 refuse 题必须写清"为什么库里答不出来"
 
-光标`type: refuse` 没用——库里有 68 条校规条款，什么都能沾上边。
+光标`type: refuse` 没用——库里有 {len(all_clauses)} 条条款，什么都能沾上边。
+
+★ **口径说明（别被数字绕晕）**：这里说 {len(all_clauses)} 条，是**从文件切出来的条款数**；
+而检索时能召回的**不是这个数** —— 入库关卡还会拦掉一批
+（太短碎屑 / 废止声明 / 完全重复 / 近似重复）。
+★ 所以出题时按本文件的条款数走（底本里全是原文，够你选），
+但判"库里到底有没有"要按**实际入库的块数**走 ——
+两者差的那几条正是被关卡拦掉的，在底本里能看见、系统却召不回。
+分不清就会出一道"底本里有、库里其实没有"的题，
+那题会被系统正确拒答，而你会误以为它拒答错了。
+（实时的入库块数看 `python evalset/run_eval.py` 启动时打的"入库 N 块"。）
 
 你要写的是**"库里哪一条都没提这件事"**，例如：
-- 「图书馆几点关门」——两篇校规里没有校历/场馆信息
-- 「学费多少钱」——两篇校规里没有收费标准
-- 「怎么申请助学贷款」——两篇校规里没有资助体系
+- 「图书馆几点关门」——全部校规里没有校历/场馆开放信息
+- 「学费多少钱」——校规里没有"学费标准"这个值。★ 注意：资助类条款里有
+  "减免一学年学费 / 减免一半"这类**额度**，沾边 ≠ 答得出来
+- 「宿舍晚上几点熄灯」——有条款要求"遵守学校作息时间"，但不给具体时刻
+
+★ **反例（别学这个）**：「怎么申请助学贷款」**已经不算 refuse 题了**。
+  语料扩容后库里真有答案（`学生资助工作实施办法`第十五条：生源地信用助学贷款、
+  不超过 20000 元/生/年），它已被改成 answer 题。
+  ⇒ **拒答题的边界会随语料变**。出题前请对着 `source_policy.md` 逐条确认
+    "库里真的没有用户要的那个值"，而不是"感觉沾不上边"。
 
 如果一条你写不出"为什么库里没有"，那它很可能不是 refuse 题。
 
@@ -175,8 +199,9 @@ def main():
 **目标：20 道**（约 14 道 answer + 6 道 refuse），
 再加 **5–8 道 multi-hop 边界题**（见下）。
 
-**优先从标`[未覆盖]` 的条款出题**——现有 20 题只覆盖了 9 条，
-剩下的 59 块（87%）从来没被问过。
+**优先从标`[未覆盖]` 的条款出题**——现有 20 题（15 answer + 5 refuse）
+只覆盖了 **{len(ALREADY_COVERED)} 个**条款，剩下 **{len(all_clauses) - len(ALREADY_COVERED)} 条**
+从来没被问过。
 
 ### answer 题（14 道）
 
