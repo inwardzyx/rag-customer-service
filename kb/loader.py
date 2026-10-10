@@ -241,6 +241,9 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
                 _clean_stats[CLEAN_OP_FOOTER] += 1
                 _clean_chars[CLEAN_OP_FOOTER] += stripped
 
+            # ★ 截断前先留一份全文（见下面的 text_full）。
+            full_text = content
+
             # ★ 超长不再静默截断：丢了多少字要报出来。
             #   为什么现在【不】改成"切成多块"：剥完页脚后全库超长块是 0 个，
             #   为不存在的需求写切分器是过度设计。真需要时再补。
@@ -265,7 +268,16 @@ def load_documents(root: str | Path, max_chars: int = 400) -> tuple[list[dict], 
                 "clause": clause.strip(),
                 "version": meta["version"],
                 "source": meta["source"],
+                # ★ 两个字段分工（2026-10-10 还的截断欠账）：
+                #   text      = 截到 max_chars，**只给 embedding 用**（bge-small 只有 512 token）
+                #   text_full = 截断前的全文，给精排判断 / 答案生成 / 返回给用户看
+                #   为什么必须两个都要：语料里 8 块 ≥400 字（最长 1870 字，
+                #   PDF 转存稿把表格拍平了），截掉的部分以前是**入库即丢** ——
+                #   模型判断"这条能不能答"时看不到它，用户也看不到。
+                #   切分器试过三种判据全失败（experiments/clean_corpus.py 顶部），
+                #   所以不切；但"不切"不等于"只能丢"。
                 "text": content,
+                "text_full": full_text,
             })
 
     # ★ 一行汇总代替逐条 warning（逐条明细已降级到 DEBUG，见 QUIET_CLEAN_DETAIL）

@@ -583,7 +583,10 @@ class RAG:
             精排分 = 大模型重新看的（慢但准）
         两个都返回，你就能在网页上直观看到"粗捞排第一的，精排未必第一" —— 这正是 rerank 的意义。
         """
-        numbered = "\n".join(f"{i}. {c['text']}" for i, (c, _) in enumerate(candidates, 1))
+        # ★ 精排要让模型判断"这条到底能不能答"，必须给它全文
+        #   （截断掉的那部分里可能正有用户要的那个值）
+        numbered = "\n".join(f"{i}. {c.get('text_full', c['text'])}"
+                             for i, (c, _) in enumerate(candidates, 1))
         prompt = (
             "判断下列每条资料对回答这个问题有多大帮助。\n"
             f"问题：{query}\n\n候选资料：\n{numbered}\n\n"
@@ -616,7 +619,8 @@ class RAG:
         return out
 
     def answer(self, question, chunks):
-        ctx = "\n".join(f"- {c['text']}" for c in chunks)
+        # ★ 生成同样用全文：喂给模型的资料不该比库里的少
+        ctx = "\n".join(f"- {c.get('text_full', c['text'])}" for c in chunks)
         prompt = ("你是学校学生事务的答疑助手。只根据下面的资料回答，资料里没有的就明确说不知道。\n"
                   f"资料：\n{ctx}\n\n问题：{question}")
         # 超时 / 限流 / 网络错误都会被 _invoke_llm 统一转成 LLMCallError 抛出来，
@@ -735,7 +739,8 @@ def chat(req: ChatRequest):
                 sources=[], took_ms=took(), rerank_used=True, knowledge_hit=False)
 
         picked = [x for x in ranked if x[2] >= 5][:3]     # 只留 5 分以上的，最多 3 条
-        sources = [Source(doc=f"{c['doc']}｜{c['clause']}", text=c["text"],
+        sources = [Source(doc=f"{c['doc']}｜{c['clause']}",
+                          text=c.get("text_full", c["text"]),
                           score=round(v, 3), rerank_score=s, reason=r)
                    for c, v, s, r in picked]
         ctx = [c for c, _, _, _ in picked]
@@ -754,7 +759,8 @@ def chat(req: ChatRequest):
                 sources=[], took_ms=took(), rerank_used=False, knowledge_hit=False)
 
         picked = [x for x in cands if x[1] >= VEC_REJECT_THRESHOLD][:3]
-        sources = [Source(doc=f"{c['doc']}｜{c['clause']}", text=c["text"],
+        sources = [Source(doc=f"{c['doc']}｜{c['clause']}",
+                          text=c.get("text_full", c["text"]),
                           score=round(s, 3)) for c, s in picked]
         ctx = [c for c, _ in picked]
         # 关掉 rerank 时用的是粗捞的向量分，比精排分粗（"意思接近但答非所问"更容易漏进来），

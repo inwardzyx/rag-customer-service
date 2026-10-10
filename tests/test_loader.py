@@ -60,8 +60,9 @@ def test_load_documents_counts():
 def test_load_documents_schema():
     docs, _ = load_documents(DOCS_DIR)
     for d in docs:
-        # 这 5 个字段正是 _guard / guard_report / chat 一路会用到的 schema
-        assert set(d) == {"doc", "clause", "version", "source", "text"}
+        # 这些字段正是 _guard / guard_report / chat 一路会用到的 schema
+        # ★ 2026-10-10 加 text_full：给精排判断/生成/用户看的全文（text 是截给 embedding 的）
+        assert set(d) == {"doc", "clause", "version", "source", "text", "text_full"}
 
 
 def test_load_documents_no_embedding_needed():
@@ -290,8 +291,18 @@ def test_real_corpus_has_no_footer_left():
     assert dirty == [], f"库里还有块带页脚残留：{dirty}"
 
 
-def test_real_corpus_no_block_is_truncated():
-    """★ 剥完页脚后，全库【原本】不该再有块被 max_chars 截断。
+def test_real_corpus_truncation_is_recoverable():
+    """★ 截断欠账已还（2026-10-10）：**不切，但也不许丢字。**
+
+    ⇒ 判据变了：从"全库没有块被截断"改成"截断必须是**可恢复**的"。
+      · `text`      截到 max_chars —— 只给 512 token 的 embedding 用
+      · `text_full` 保留全文     —— 精排判断 / 答案生成 / 返回给用户
+    ⇒ 索引侧仍然只看得到前 400 字（模型硬限制，改不了），但**内容不再丢失**。
+
+    ------------------------------------------------------------------
+    下面这段原始说明保留 —— 它记录了当时为什么选择"不切"：
+
+    ★ 剥完页脚后，全库【原本】不该再有块被 max_chars 截断。
 
     如果将来抓到一份真长条款把这里顶红了，说明该上「切多块」了，
     而不是继续让它静默丢字 —— 这条就是那个提醒。
@@ -326,12 +337,23 @@ def test_real_corpus_no_block_is_truncated():
         留档见 `experiments/clean_corpus.py` 文件顶部的"切分器：默认关闭"一节。
     """
     docs, _ = load_documents(DOCS_DIR)
-    over = [(d["clause"], len(d["text"])) for d in docs if len(d["text"]) >= 400]
-    assert over == [], (
-        f"有块被截断了（丢字）：{over}\n"
-        f"  已知欠账（2026-10-10 语料扩容引入）：新语料 8 块 ≥400 字，"
-        f"最长 1870 字。切分器试过三种判据都失败（详见 experiments/clean_corpus.py 顶部）。\n"
-        f"  真要解决必须拿到【原始 PDF 的表格结构】，靠转存稿重建表格是造假。")
+    truncated = []
+    for d in docs:
+        full = d.get("text_full")
+        assert isinstance(full, str) and full, (
+            f"{d['clause']} 缺 text_full —— 截断又变回**静默丢字**了")
+        # 截断只能砍尾巴，绝不能改动内容
+        assert d["text"] == full[:len(d["text"])], (
+            f"{d['clause']}: text 必须是 text_full 的前缀，实际对不上")
+        if len(d["text"]) < len(full):
+            truncated.append((d["clause"], len(d["text"]), len(full)))
+
+    # 已知欠账的**规模**钉在这里：这批 PDF 转存稿里有 8 块超长（切分器三试三败）。
+    # 不切是决定，但数量/丢字变多时必须有人看一眼 —— 所以钉上限，不钉等号。
+    lost = sum(f - t for _, t, f in truncated)
+    assert len(truncated) <= 8, f"被截块数变多了（{len(truncated)}）：{truncated}"
+    assert lost <= 4200, f"累计丢字变多了（{lost}）：{truncated}"
+    print(f"（被截 {len(truncated)} 块；全文由 text_full 保留，索引侧少看 {lost} 字）")
 
 
 # ==================================================================
