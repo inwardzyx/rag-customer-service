@@ -23,9 +23,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# ★ 与 check_readme_numbers.py 同一行修复，理由也是同一个：
+#   本脚本通篇用 print("✓ …") / print("✗ …") 报结果，而这些字符在 GBK 管道下
+#   编码不了 —— 一行都打不出来就直接崩，**看起来像"检查失败"，其实是打印失败**。
+#   回归测试：本文件里的「基线2」。
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README = REPO_ROOT / "README.md"
@@ -120,13 +127,21 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
-def run_check() -> tuple[int, str]:
+def run_check(env_extra: dict | None = None) -> tuple[int, str]:
+    """跑一次对账脚本。
+
+    env_extra：额外/覆盖的环境变量。存在的理由是「基线2」——
+    要模拟 pre-commit 的环境（stdout 是管道 + GBK），
+    那跟手动开个终端跑完全是两回事。
+    """
+    env = {**os.environ, **env_extra} if env_extra else None
     r = subprocess.run(
         [PY, str(CHECK)],
         capture_output=True,
         text=True,
         encoding="utf-8",
         cwd=str(REPO_ROOT),
+        env=env,
     )
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
@@ -144,6 +159,27 @@ def main() -> int:
         print(out)
         return 2
     print("✓ 基线：未注入变异时报绿")
+
+    # ---- 0b. ★★ 负向基线：stdout 不是 UTF-8 时【也必须绿】----
+    #   起因（2026-10-11，真实发生在这台机器上）：
+    #     pre-commit 里跑对账脚本时 stdout 是【管道 + GBK】，脚本最后那句
+    #     print("✓ 数字对账通过…") 的 ✓ 编码不了 → UnicodeEncodeError → 退出码 1。
+    #     于是钩子报出的是「数字对账失败 —— 数字与产物不一致」：
+    #     **逻辑全过了，报出来的却是一句假话**，还会把人逼去 --no-verify。
+    #   修法：check_readme_numbers.py 开头加
+    #     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    #     （与 scripts/check_push_paths.py:48 同款写法，那边早就有）。
+    #   ★ 这条就是那个修复的回归测试：谁把那行 reconfigure 删掉，这里立刻变红。
+    #     —— 也正是本文件第 116 行说的那种「负向变异」：
+    #       有信息量的不是"改坏了会响"，而是"不该响的时候确实不响"。
+    code, out = run_check({"PYTHONIOENCODING": "gbk"})
+    if code != 0:
+        print("✗ 基线2失败：把 stdout 强制成 GBK（= pre-commit 的环境）就报错了。")
+        print("  ⇒ 检查逻辑没错，是它【打印】时就崩了，于是报出一句假话。")
+        print("  ⇒ 修法：check_readme_numbers.py 开头补 sys.stdout.reconfigure(encoding='utf-8')")
+        print(out)
+        return 2
+    print("✓ 基线2：stdout 强制成 GBK（模拟 pre-commit 的管道）时仍然报绿")
 
     # ---- 逐个变异，每轮恢复原文 ----
     undetected: list[str] = []

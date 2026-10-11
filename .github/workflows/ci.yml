@@ -90,3 +90,96 @@ jobs:
         #   同样是"测试写了但没人跑"的摆设。已验证它们不依赖 DEEPSEEK_API_KEY，
         #   能在干净的 CI 环境里跑（删掉 key 实测 5 passed）。
         run: python -m pytest tests/test_guard.py tests/test_eval_set.py tests/test_llm_resilience.py -v
+
+  # ----------------------------------------------------------------
+  # 容器 job：证明「镜像里真的跑得起来」
+  # ----------------------------------------------------------------
+  # 为什么不靠上面两个 job 推：慢 job 验证的是【runner 上】装得上
+  #   （setup-python + pip），而镜像里不是 runner 的环境 ——
+  #   差一个 libgomp1 就够让 import onnxruntime 当场炸。
+  #   所以「CI 绿了」推不出「容器能跑」，除非真的在容器里跑一次。
+  #   这是本次加 Dockerfile 时唯一值得新开一个 job 的理由。
+  #
+  # ★ 全程不配 DEEPSEEK_API_KEY。下面断言的两条路径都不需要模型生成：
+  #   ① 入库把关（tests/test_guard.py 通过 conftest 注入假模型）
+  #   ② /chat 的 use_rerank=false 拒答路径（走向量阈值，不碰模型）
+  #   ⇒ 容器 job 里同样没有密钥，也就没有「密钥泄漏进 CI 日志」这条风险。
+  #   ★ 反面说清楚：/chat 的【默认】路径（use_rerank=true）在这个 job 里
+  #     是 500 —— 那是刻意的（缺 key = 配置错误要炸出来，见 service.py:228），
+  #     所以这里不去断言它，免得把「有意为之」写成一个看着像 bug 的期望值。
+  docker:
+    name: 容器 job · 构建 + 容器内跑门禁 + 起服务打接口
+    runs-on: ubuntu-latest
+    env:
+      # 与慢 job 同理：runner 在海外，镜像源必须覆盖成 huggingface.co
+      # （service.py 用 setdefault 设成国内镜像，这里覆盖它，零改代码）
+      HF_ENDPOINT: https://huggingface.co
+      LANGSMITH_TRACING: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t rag-cs:ci .
+
+      - name: 在【容器里】跑入库把关门禁
+        # tests/test_guard.py 已写死「263 留 / 23 拦」，所以这一步同时证明四件事，
+        # 且都不是「看着对」：
+        #   · 镜像里依赖齐（缺 libgomp1 会在这里 import 就炸）
+        #   · 模型下得动（HF_ENDPOINT 指向 huggingface.co）
+        #   · 语料解析与五道关的判定跟本地一致
+        #   · 容器的 Python 3.14 真装得上这套依赖
+        # ★ 复用测试里那份真相源，而不是在 workflow 里再抄一遍 263/23：
+        #   抄一遍就等于多一个没人同步的过期数字。
+        run: |
+          docker run --rm \
+            -e HF_ENDPOINT="$HF_ENDPOINT" \
+            -e LANGSMITH_TRACING=false \
+            rag-cs:ci python -m pytest tests/test_guard.py -q
+
+      - name: 起服务容器
+        run: |
+          docker run -d --name rag -p 127.0.0.1:8000:8000 \
+            -e HF_ENDPOINT="$HF_ENDPOINT" \
+            -e LANGSMITH_TRACING=false \
+            rag-cs:ci
+
+      - name: 等就绪（首次要下 92MB 模型）
+        # 不 sleep 一个拍脑袋的固定秒数：那样要么白等、要么不够。
+        # 改成轮询 /health，只在它真的说出 status=ok 时才往下走。
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:8000/health -o /tmp/health.json 2>/dev/null \
+               && grep -q '"status":"ok"' /tmp/health.json; then
+              echo "第 ${i} 次轮询就绪：$(cat /tmp/health.json)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::容器 450 秒内没就绪（/health 一直不是 ok）"
+          exit 1
+
+      - name: 断言「不需要密钥的那两条路」在容器里真的通
+        run: |
+          set -euo pipefail
+
+          echo "── ① 入库把关：排除「服务起来了但库是空的」──"
+          health=$(curl -sf http://127.0.0.1:8000/health)
+          echo "$health"
+          echo "$health" | grep -qE '"chunks":[1-9][0-9]+' \
+            || { echo "::error::chunks 不是一个大数 —— 库里没东西"; exit 1; }
+          echo "$health" | grep -qE '"rejected":[1-9][0-9]*' \
+            || { echo "::error::没有任何资料被拦下 —— 五道关没跑"; exit 1; }
+
+          echo "── ② 拒答路径（use_rerank=false，全程不调模型）──"
+          resp=$(curl -sf -X POST http://127.0.0.1:8000/chat \
+                   -H 'Content-Type: application/json' \
+                   -d '{"question":"图书馆几点关门？","use_rerank":false,"use_rewrite":false}')
+          echo "$resp"
+          echo "$resp" | grep -q '"knowledge_hit":false' \
+            || { echo "::error::库里没有的问题没有拒答（knowledge_hit 不是 false）"; exit 1; }
+
+      - name: 挂了就把容器日志倒出来
+        # 否则失败信息只有一句"exit 1"，查起来只能靠猜。
+        if: failure()
+        run: docker logs --tail 80 rag || true

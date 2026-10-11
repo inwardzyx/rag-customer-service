@@ -1,0 +1,48 @@
+# ==================================================================
+# .dockerignore —— 管"进不进镜像"，与 .gitignore 是两件事
+# ==================================================================
+# 为什么不直接抄 .gitignore：两者目的不同。
+#   · .gitignore 管「进不进【仓库】」；
+#   · 这里管「进不进【镜像】」。
+# 有交集但不等价，最明显的一处：tests/ 两边都要（CI 在容器里跑门禁），
+# 而 .env 两边都不要，理由却不同 —— 那边是"不能公开"，这边是"不能烧进镜像层"。
+
+# ── 密钥：绝对不进镜像 ──
+# 一旦 COPY 进镜像，docker history / 镜像导出 / 分发给别人的 tar 里都有它，
+# 而且删掉那层也没用（前一层里还在）。要用 key 就在运行时给：
+#     docker run --env-file .env -p 8000:8000 rag-cs
+.env
+.env.*
+!.env.example
+*.key
+
+# ── git 历史：几十 MB，容器里没人用 ──
+.git
+.gitignore
+
+# ── 缓存与中间产物 ──
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+*.onnx
+.tmp_extract/
+.demo_frames/
+.demo_chrome_profile/
+*.log
+
+# ── 本地讨论稿 / AI 协作配置：不进仓库，也不进镜像 ──
+# （内容与镜像无关，而且体积上完全没必要带上）
+cc_*.md
+cc_*.log
+CLAUDE.md
+_reviews/
+
+# ── 只给 README 看的图，运行时不读 ──
+# ★ 注意 docs/ 本身【不能】排除：service.py 的 DOCS_DIR 就是 docs/，
+#   语料在里面（docs/kb/ 与 docs/inbox/），排掉它服务起来就是空库。
+docs/images/
+
+# ── 本文件与 Dockerfile 自身 ──
+.dockerignore
+Dockerfile

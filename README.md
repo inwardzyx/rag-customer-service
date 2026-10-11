@@ -1321,16 +1321,27 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 
 ## CI：每次 push 自动跑，把"漏答 0"变成质量门
 
-`.github/workflows/ci.yml` —— 有意拆成两个 job：
+`.github/workflows/ci.yml` —— 有意拆成三个 job：
 
 | job | 装什么 | 跑什么 | 实测耗时 |
 |---|---|---|---|
 | **fast** | 只装 `pytest` | `tests/test_loader.py`（22 条） | **1.3 秒** |
 | **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py` + `test_llm_resilience.py`（35 条） | 15 秒起（首次还要下模型） |
+| **docker** | 构建镜像（又是 `requirements.txt` + 92MB 模型） | **在容器里**跑 `test_guard.py`，再起服务打接口 | 首次慢（装依赖 + 下模型），没量过所以不写数 |
 
-> 两个 job 加起来 **覆盖全部 57 条**（22 + 35），不存在「只在本地跑过」的测试。
+> 前两个 job 加起来 **覆盖全部 57 条**（22 + 35），不存在「只在本地跑过」的测试。
+> 第三个 job **不增加覆盖**，它跑的是同一套门禁在**容器里**再来一遍 —— 增加的是**证伪能力**。
 
 **为什么拆**：两类测试成本差约 500 倍（实测 0.03s vs 15s）。合成一个 job 的话，改一行加载器也要等模型下载完才知道对不对。
+
+**为什么还值得为容器单开一个 job**：`full` 验证的是「在 **runner** 上装得上」，而镜像里的环境**不是** runner 的环境 —— 差一个 `libgomp1`（onnxruntime 要的 OpenMP 运行库，`python:3.14-slim` 里没有）就够让 `import onnxruntime` 当场炸。所以「CI 绿了」推不出「容器能跑」，除非真的在容器里跑一次。
+
+容器 job 用的是**同一份真相源**：`tests/test_guard.py` 里已经写死了「263 留 / 23 拦」，所以 job 里不另抄这两个数字（抄一遍就等于多一个没人同步的过期数字）。它断言的是另外三件不需要密钥的事：
+- `/health` 的 `status` 真的变成 `ok`（= 模型下得动、索引建得起来）；
+- `chunks` / `rejected` 都是正数（= 五道关真跑过，而不是「服务起来了但库是空的」）；
+- `/chat` 用 `use_rerank=false` 问一个库里没有的问题 → `knowledge_hit=false`（= 拒答路径在容器里真的通）。
+
+> 换成一句话：慢 job 是这句「pip 层预演」的**预演**，容器 job 才是正片。预演红了能省你半天，但预演绿了不等于正片能放。
 
 **fast job 为什么敢只装 pytest**：`kb/loader.py` 只 import `re`、`pathlib` 和 `logging`（都是标准库）。这不是"我觉得"，是验过的 —— 拿一个**没装 fastembed / onnxruntime / jieba** 的解释器去 import 它，连带加载的第三方模块为**零**；再用只装了 pytest 的隔离环境跑，22 条全绿。对照实验：同一个"穷"解释器跑 `test_guard.py` 会直接 `ModuleNotFoundError: No module named 'dotenv'` —— 反过来证明慢 job 确实必须装全套。
 
@@ -1351,6 +1362,36 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 
 ---
 
+## 用 Docker 跑（可选）
+
+```bash
+docker build -t rag-cs .
+
+# 有 key：走完整路径（查询改写 → 粗捞 → 精排 → 生成）
+docker run --rm -p 8000:8000 --env-file .env rag-cs
+
+# 没 key 也能跑，但只有「不需要模型生成」的那几条路（见下）
+docker run --rm -p 8000:8000 rag-cs
+```
+
+起来后开 http://127.0.0.1:8000 。
+
+**三件要说清楚的事**：
+
+1. **冷启动要下 92MB 模型**（模型刻意不烤进镜像：镜像小、层可复用）。这段时间 `/health` 返回 `loading`。挂个卷就能跨容器复用，不必重建一次重下一遍：
+   ```bash
+   docker run --rm -p 8000:8000 -v rag-model:/root/.cache/fastembed rag-cs
+   ```
+2. **镜像里没有 `.env`**（`.dockerignore` 挡掉了）。密钥一旦 `COPY` 进镜像，`docker history` / 镜像导出里都能看见，而且删掉那层也没用（前一层还在）。所以 key 只在运行时给。
+3. **不给 key 时，`/chat` 的默认路径会 500** —— 这是**刻意的**，不是没兜住：缺 key 属于配置错误，就该炸出来让人看见，不许包装成「调用失败」再降级成 200（理由见 `service.py:228` 那段注释）。
+   代价也如实写下来：它是**第一次请求**才暴露的，服务启动时不会提醒你。
+   不给 key 能用的是 `/health`、`/guard-report`，以及 `/chat` 的 `use_rerank=false` 拒答路径 —— CI 容器 job 断言的就是这三条。
+
+> ★ 坦白一处**我没验到的地方**：镜像 tag `python:3.14-slim` 是否存在、构建耗时与体积，我在这台机器上**验不了** —— 本机没装 Docker（装它要 WSL2/Hyper-V + 重启，会扰动现有的 VirtualBox 环境），而 Docker Hub 从这里的网络出不去（API 返回 502，`web_fetch` 直接把它判成非公网地址）。
+> 所以上面我**没写任何**「镜像 xx MB / 构建 xx 秒」的数字 —— 没量过的数字正是这份 README 一直在剿的东西。tag 与耗时交给 CI 的容器 job 实测：tag 不存在的话，第一步拉镜像就会红，不会静默过去。
+
+---
+
 ## 还没做的（以及为什么现在不做）
 
 主动写出来，比被面试官挖出来强。
@@ -1364,7 +1405,6 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 | 缺口 | 现状 | 为什么现在不做 |
 |---|---|---|
 | **没部署** | 只能本地跑 | 免费平台要塞 `DEEPSEEK_API_KEY`，**别人点开就能刷你的 key**；平台一 sleep 就 502，比没链接更糟。替代方案**已落地**：README 顶部那段 10 秒实录动图（`docs/images/demo.gif`），可见即可信 |
-| **没有 Dockerfile** | 只能本地跑 | 顺序是有意的：先让 CI 慢 job 把「Linux + py3.14 装依赖」跑通，Dockerfile 就只剩打包这一件事 |
 | **粗捞池只有 5 条** | `search(k=5)`，而库已有 263 块 | 演示口径是"粗捞 20 精排 3"，代码里是 5。q12 曾因口语化掉出前 5—— **两层修法都试过**：`normalize_query()` 同义词表（2026-10-10，融合第 10 → 第 1 名）与**LLM 查询改写**（held-out Recall@5 35/44 → 42/44）。★ 两层都**不是靠扩池**，且扩池本身有反证：q12 在池=5 与池=10 里**位置都是第 10 名**，扩池只是放宽截断线。**扩池已量（2026-10-11）**：独立集 105 题、产品默认路径（`evalset/probe_pool_size.py`）—— gold 进池 35→37，但**漏答率不变（1/44）**，**拒答准确率 42/61 → 36/61**（多放行 6 道）⇒ **明确不扩**，不再是拍板 |
 | **超时只能"不等"，不能"掐断"** | 超时后那个后台线程其实还在跑完 | `llm.invoke()` 是同步阻塞的，用线程池 + `future.result(timeout=)` 只能保证主线程不再干等；`cancel()` 对已经开始执行的任务无效。要真正掐断得改异步 + 客户端级超时，属于下一阶段，这里先如实记着 |
 
@@ -1378,7 +1418,7 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 6. ~~结构化日志~~ ✅ 已完成（`service.py` / `env_compat.py` / `evalset/run_eval.py` 运行时 `print` 换成 `logging`，入口处 `basicConfig` 保住输出；`experiments/` 教学脚本保留 `print` —— 那里逐行打印是刻意的）
 7. ~~LLM 调用的超时 / 重试 / 降级~~ ✅ 已完成（commit `bf58b73`：`_invoke_llm` 在调用点兜超时、rerank 解析失败不再静默给 0 分、幻觉 id 越界跳过、`question` 加 `max_length`；`tests/test_llm_resilience.py` 5 条守门测试，已过变异测试验证不是摆设）
 8. ~~数据层第二轮：版本比较靠巧合 / 分块静默失败 / 页脚句中命中~~ ✅ 已完成（见上面「数据层」节；测试 49 → 54，变异测试 4/4 抓住）
-9. **Dockerfile** —— 92MB 模型的镜像怎么瘦身（CI 慢 job 已预先验证 Linux + py3.14装得上）
+9. ~~Dockerfile~~ ✅ 已完成（`Dockerfile` + `.dockerignore` + CI 容器 job；模型不烤进镜像，冷启动下 92MB，可挂卷复用）
 10. ~~录一段 GIF 放 README 顶部~~ ✅ 已完成（`docs/images/demo.gif`，10 秒实录；录制脚本 `scripts/record_demo.mjs` + `scripts/make_gif.py` 可复现）
 11. **把 `status: 现行/已废止` 做成元信息字段，并让精排显式检查它**
     —— 上面那个实验测出「检索和精排都拦不住废止条款」，要真正解决就得先让模型

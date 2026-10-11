@@ -911,11 +911,28 @@ def index():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    # ★ 2026-10-11 改成可配（HOST / PORT）。起因是 Docker：
+    #   容器里的 127.0.0.1 只有容器自己看得见 —— 宿主机的 `-p 8000:8000`
+    #   映射的是容器的网卡，救不了 loopback。所以容器里必须能绑 0.0.0.0。
+    #   ★ 默认值【一个字符都没改】：不在容器里跑时行为与以前完全一致
+    #     （仍然只监听本机，不会莫名其妙把服务暴露到局域网）。
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+
+    # ★ 下面这几行原来把 127.0.0.1:8000 写死了：HOST/PORT 一旦被改，
+    #   它们就会打印【一个并不存在的地址】—— 又属于"看着对、其实不对"那一类。
+    #   现在改成引用上面两个变量。绑 0.0.0.0 时给人看的是 127.0.0.1
+    #   （0.0.0.0 不是一个能拿去浏览器里打开的地址）。
+    show = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    base = f"http://{show}:{port}"
     logger.info("=" * 60)
-    logger.info("服务启动后访问：")
-    logger.info("   http://127.0.0.1:8000        聊天页面")
-    logger.info("   http://127.0.0.1:8000/docs   自动生成的接口文档")
-    logger.info("   http://127.0.0.1:8000/health 健康检查")
+    logger.info("服务启动后访问（实际绑定 %s:%s）：", host, port)
+    logger.info("   %-28s 聊天页面", base)
+    logger.info("   %-28s 自动生成的接口文档", base + "/docs")
+    logger.info("   %-28s 健康检查", base + "/health")
+    if host in ("0.0.0.0", "::"):
+        logger.info("★ 绑的是 %s：同网段的人都能访问（本机用 %s）", host, base)
     logger.info("按 Ctrl+C 停止")
     logger.info("=" * 60)
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")

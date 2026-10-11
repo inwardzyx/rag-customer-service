@@ -1,0 +1,23 @@
+# ==================================================================
+# .gitattributes —— 钉死「行尾会真的把东西弄坏」的那几类文件
+# ==================================================================
+# 为什么需要它：本机 `core.autocrlf=true`（Windows 上是常见默认值），
+#   于是**新 clone 出来的**文本文件是 CRLF。对多数文件无所谓，
+#   但下面这几类会当场坏掉，而且报错信息指不到原因：
+#
+#   · Dockerfile —— `RUN cmd \` 的续行符后面跟一个 CR，构建会失败，
+#     报错却指向一条看着完全正常的命令。（实测过本机这份是纯 LF：
+#     0 个 CRLF / 77 个纯 LF —— 但这靠的是工具，不是仓库的约定。）
+#   · 无扩展名的 git hook —— shebang 变成 `#!/bin/sh\r`，
+#     Git Bash 直接报 bad interpreter。（`scripts/hooks/pre-commit` 现在
+#     恰好是 LF，但换台机器 clone 出来就未必了。）
+#
+# ⇒ 与其靠"记得别用记事本"，不如让 LF 变成**仓库的属性**。
+#
+# ★ 只钉这几类，**不做**全局 `* text=auto`：
+#   那会让每个人下次 checkout 时整个工作区的行尾一起变，
+#   平白制造一次"我没改，但 git 说全变了"的混乱。范围越小越可信。
+Dockerfile        text eol=lf
+.dockerignore     text eol=lf
+*.sh              text eol=lf
+scripts/hooks/*   text eol=lf

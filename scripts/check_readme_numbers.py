@@ -38,6 +38,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# ★ 2026-10-11：stdout 必须显式转成 UTF-8 —— 这是被 pre-commit 抓到的一个**假错**。
+#   症状：钩子里 stdout 是【管道 + GBK】（Windows 默认），脚本最后那句
+#   `print("✓ 数字对账通过…")` 的 ✓ 编码不了 → UnicodeEncodeError → 非零退出。
+#   ⇒ 钩子于是报出「数字对账失败 —— 数字与产物不一致」：
+#     **检查逻辑全过了，报出来的却是一句假话**，而且会把人逼去 --no-verify。
+#   （报假错的检查比没有更坏 —— 它教人不信检查。同源教训见 _check_stale_text。）
+#   ★ 写法与 scripts/check_push_paths.py:48 一致：那边早就有这一行，这里漏了。
+#   ★ 回归测试：scripts/mutate_check_numbers.py 的「基线2」——把它删掉，那条基线立刻红。
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
