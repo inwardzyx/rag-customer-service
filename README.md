@@ -1350,7 +1350,7 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 |---|---|
 | 变异 | 临时分支 `tmp-verify-gate-can-fail` 上，把 `service.py` 里 `/health` 的 `len(rag.chunks)` 改成 `0` |
 | 为什么挑这里 | `tests/test_guard.py` 跑在断言步**之前**，所以「删 `libgomp1` ／ 把 `docs/` 排掉」那类变异会在更早的步骤就红、**根本到不了断言步**。而"断言步会不会响"才是真正该怀疑的一步 |
-| 触发方式 | Actions 页的 `Run workflow`。★ 推分支**不会**触发任何 CI —— `ci.yml` 的 `on:` 只监听 main 的 push、PR 和 `workflow_dispatch`（这条是我原先搞错的） |
+| 触发方式 | **开一个 PR**（`pull_request` 事件）—— 实测 run #23 的 `event=pull_request`，来自 PR #1（`tmp-verify-gate-can-fail` → `main`，已关闭、未合并）。★ 推分支**不会**触发任何 CI：`ci.yml` 的 `on:` 只监听 main 的 push、PR 和 `workflow_dispatch`。<br>★★ 这一格我**连错两次**，都记在这儿当反面例子：先写"推分支就行"（错），被 cc 审出来后又写"用 `Run workflow`"（**也错**，实际是开 PR）。两次都是**没核对就写机制**——而"机制"恰好是最容易被想当然、又最该现算的东西 |
 | 结果 | run #23 **failed**；三个 job 里**只有容器 job 红**（快/慢 job 绿），红的原句是 `Process completed with exit code 1` ＋ `chunks 不是一个大数 —— 库里没东西` |
 | 这证明了什么 | 断言失败**真的**会让 job 变红。并且那句错误串在整个仓库里**只出现一次**（`ci.yml:187`，就在断言步里）⇒ 红的确定是断言步，不是别处 |
 | 落盘 | 临时分支已删。上面的原句来自 run 页面的**注解表格** —— 顺带实测：**注解接口不需要 token，而日志接口需要**（未认证 GET 日志 → 403）。所以"想让不登录也能机械读到的数字"应该走 `::notice::` / `::error::`，而不是只 echo 进日志 |
@@ -1406,7 +1406,7 @@ docker run --rm -p 8000:8000 rag-cs
 > **结论（2026-10-11 CI run #20 实测）：tag 存在，构建 42 秒、容器内门禁 51 秒、等就绪 40 秒。**
 > ★ 但**镜像体积我仍然没写死在这里**，理由是 cc 盲审指出的一条：base 镜像一更新这个数就过期，而 `check_readme_numbers.py` **无法对它现算** —— 冻进文档就成了一个没人能对账的数字（正是这份 README 一直在剿的东西）。
 > 所以改为**容器 job 里打印**（「记下镜像体积」那一步，并同时发一条 `::notice::`，便于**不登录也能读**到）。
-> ★ 实测这个数**连逐次都不稳定**：run #22 是 469,106,319 字节、run #23 是 469,106,818 —— 同一条 Dockerfile、两次构建差 499 字节。冻进文档只会更快过期。
+> ★ 实测这个数**连逐次都不稳定**：run #22 = 469,106,319 字节、run #23 = 469,106,818、run #24 = 469,108,525 —— 同一条 Dockerfile 三次构建三个值（相差最大 2206 字节）。冻进文档只会更快过期。
 
 ---
 
