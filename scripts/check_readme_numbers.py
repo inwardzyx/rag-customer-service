@@ -295,12 +295,122 @@ def _check_scale_ranks() -> list[str]:
     return []
 
 
+# ---------------------------------------------------------------
+# ★ 待办陈述的过期检查（2026-10-10，同类问题第 4 次）
+# ---------------------------------------------------------------
+# 病根不是"忘了改"，是**没人告诉写文档的人它过期了**：
+#   probe_ablation.py 的 docstring / CLAUDE.md 的虚构历史 / probe_threshold.py 的 268，
+#   第四次是〈还没做的〉里"拒答集只有 5 条"，而那时其实已经补到 61 道 ——
+#   留着它等于**把自己已经补的短板写成还没补**。
+# ⇒ 原来的对账只管"数字对不对"，不管"这条待办还成不成立"。
+#   这里补上：**每条待办配一个可现算的完成判据**，达标了却还挂着 → 报错。
+#   ⚠️ 匹配式必须带"未完成"的语气词（只有/仅/需/要/尚未/待），
+#     否则将来写"曾计划 n≥60，已于 X 完成"这种历史叙述会被误伤。
+TODO_CLAIMS = [
+    {
+        "label": "拒答集扩到 n≥60",
+        "re": r"(?:拒答集[^\n]{0,24}(?:只有|仅有?)\s*\d+\s*条)"
+              r"|(?:(?:要|需|应|尚未|待)[^\n]{0,30}n\s*[≥>=]+\s*60)",
+        "actual": lambda: _count_questions("refuse"),
+        "done_at": 60,
+        "fix": "把那条待办删掉，并在评测一节写上实测值（RESULTS.md 有全部数字）",
+    },
+    {
+        "label": "录一段 GIF 放 README 顶部",
+        "re": r"(?:(?:要|需|应|尚未|待)[^\n]{0,20}录[^\n]{0,12}GIF)",
+        "actual": lambda: 1 if (REPO_ROOT / "docs" / "images" / "demo.gif").exists() else 0,
+        "done_at": 1,
+        "fix": "动图已存在（docs/images/demo.gif），把那条待办标成已完成",
+    },
+    {
+        "label": "补 Dockerfile",
+        "re": r"(?:(?:要|需|应|尚未|待|没有)[^\n]{0,16}Dockerfile)",
+        "actual": lambda: 1 if (REPO_ROOT / "Dockerfile").exists() else 0,
+        "done_at": 1,
+        "fix": "Dockerfile 已存在，把〈还没做的〉里那条删掉",
+    },
+]
+
+
+def _count_questions(kind: str) -> int:
+    """数 held-out 出题集里某种题型的条数（现算，不抄 README）。"""
+    import json
+    p = REPO_ROOT / "evalset" / "heldout" / "questions.json"
+    if not p.exists():
+        return 0
+    data = json.loads(p.read_text(encoding="utf-8"))
+    qs = data.get("questions") if isinstance(data, dict) else data
+    return sum(1 for q in qs if q.get("type") == kind)
+
+
+def _check_todo_claims() -> list[str]:
+    rd = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    # ★ 先剥掉 `~~删除线~~`：Markdown 里删除线就是"已作废"的记号，
+    #   它常常被用来**留档旧说法**（"~~拒答集只有 5 条~~ → 已扩到 61 道"）。
+    #   不剥的话，我写的那句完成说明本身会被判成"待办还在" ——
+    #   第一版就是这样，检查器报了它自己刚生成的留档。
+    rd = re.sub(r"~~.*?~~", " ", rd, flags=re.S)
+    errs = []
+    for t in TODO_CLAIMS:
+        n = t["actual"]()
+        if n >= t["done_at"] and re.search(t["re"], rd):
+            errs.append(
+                f"✗ 待办陈述过期：「{t['label']}」还写在 README 里，"
+                f"但实测已经 {n}（完成判据 ≥{t['done_at']}）—— {t['fix']}")
+    return errs
+
+
+def _check_completed_list_metrics() -> list[str]:
+    """★「下一步的顺序」里那些 ✅ 已完成 的条目，引用的必须是**当前**指标。
+
+    实测起因：那条"20 题小评测集"写着"离线层 Recall@5 13/14、漏答 0/14、
+    拒答准确率 5/6"—— 全是换语料前的旧值，而同一份 README 的评测表上写着 15/15。
+    一份文档里两个自相矛盾的当前值，读者只会信那个好看的。
+    ⇒ 凡是出现在这一段里的 x/y，都拿 report-vector.md 现算的值去对。
+    """
+    rd = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    rep = (REPO_ROOT / "evalset" / "report-vector.md").read_text(encoding="utf-8")
+    m = re.search(r"^### 下一步的顺序(.*?)(?=^### |^## |\Z)", rd, re.S | re.M)
+    if not m:
+        # ★ 不静默返回 [] —— 那一节改名/删掉时，这条检查会悄悄失效，
+        #   而"看起来通过"比"报错"危险得多（隔壁 _check_scale_ranks 同款教训）。
+        return ["✗ 已完成清单的指标检查：README 里找不到「### 下一步的顺序」这一节"
+                "（改名了？删了？）—— 这条检查失去作用对象，请同步更新本脚本"]
+    seg = m.group(1)
+
+    def cur(pat: str) -> str | None:
+        mm = re.search(pat, rep)
+        return f"{mm.group(1)}/{mm.group(2)}" if mm else None
+
+    now = {
+        "Recall@5": cur(r"应答题数：\d+\s*Recall@5：(\d+)/(\d+)"),
+        "漏答": cur(r"漏答率：(\d+)/(\d+)"),
+        "拒答准确率": cur(r"拒答题数：\d+\s*拒答准确率：(\d+)/(\d+)"),
+    }
+    errs = []
+    # ★ 数字外面通常包着 Markdown 粗体（`Recall@5 **15/15**`），
+    #   所以强调符必须允许 —— 第一版没允许，结果**一条都匹配不到**、检查恒绿，
+    #   是变异测试（把 15/15 改回 13/14）把它抓出来的。
+    for label, pat in (("Recall@5", r"Recall@5\s*\**\s*(\d+/\d+)"),
+                       ("漏答", r"漏答\s*\**\s*(\d+/\d+)"),
+                       ("拒答准确率", r"拒答准确率\s*\**\s*(\d+/\d+)")):
+        for got in re.findall(pat, seg):
+            if now[label] and got != now[label]:
+                errs.append(
+                    f"✗ 已完成清单里的 {label} 是旧值：写的是 {got}，"
+                    f"report-vector.md 现在是 {now[label]} —— 改成当前值，"
+                    f"或注明那是哪一轮的历史数字")
+    return errs
+
+
 def check() -> tuple[list[str], list[str]]:
     """返回 (errors, warns)。有 errors 就非零退出。"""
     errors: list[str] = []
     warns: list[str] = []
 
     errors += _check_refuse_rate()
+    errors += _check_todo_claims()
+    errors += _check_completed_list_metrics()
     errors += _check_recall()
     errors += _check_scale_ranks()
 
