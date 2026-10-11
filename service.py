@@ -729,7 +729,13 @@ class ChatResponse(BaseModel):
 def health():
     """健康检查：部署后第一件事就是访问它，看服务活着没"""
     return {"status": "ok" if rag.ready else "loading",
-            "chunks": len(rag.chunks),
+            #
+            # ★★ 临时变异（分支 tmp-verify-gate-can-fail，用完即删，勿合进 main）：
+            #    故意把 chunks 打成 0，看 CI 容器 job 的【断言步】会不会红。
+            #    为什么单挑这里：tests/test_guard.py 跑在断言步【之前】，
+            #    所以「删 libgomp1 / 排掉 docs/」那类变异会在更早的步骤就红，
+            #    根本到不了断言步 —— 而"断言步会不会响"才是最该怀疑的。
+            "chunks": 0,
             "rejected": len(rag.rejected)}
 
 
