@@ -62,6 +62,17 @@ import re
 import sys
 from pathlib import Path
 
+# ★ 2026-10-11：stdout 必须显式转成 UTF-8。这是**被它自己拦下来时**发现的，
+#   同一个病在本仓库已经是第三次（check_readme_numbers.py / mutate_check_numbers.py
+#   之后，第三个）：本脚本用 print 打中文 + ⇒，而 pre-push 里 stdout 是
+#   【管道 + GBK】⇒ print(w) 直接抛 UnicodeEncodeError ⇒ 退出码 1。
+#   最坏的地方不是"崩了"，而是**崩出来的那句话是假的**：
+#   钩子报的是「★ 产物不合理（上面列出的那些）—— 查环境后重跑，别当基线用」
+#   —— 上面一行都没有，产物也没被检查完。**报假错比不报更坏：它教人不信检查。**
+#   （写法同 scripts/check_push_paths.py:48。只在 Windows 的"重定向/被捕获"场景触发，
+#    Python 直接写控制台走 UTF-16 API 不受影响，Linux CI 也不受影响。）
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ★ 产物文件清单。**必须显式列出**（不用 glob 去逐个检查）——
