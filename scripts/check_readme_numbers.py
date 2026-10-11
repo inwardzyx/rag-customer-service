@@ -435,7 +435,7 @@ def _check_todo_registry_complete() -> tuple[list[str], list[str]]:
 
 
 def _count_questions(kind: str) -> int:
-    """数 held-out 出题集里某种题型的条数（现算，不抄 README）。"""
+    """数 held-out 出题集里某种题型的条数（现算，不抄README）。"""
     import json
     p = REPO_ROOT / "evalset" / "heldout" / "questions.json"
     if not p.exists():
@@ -443,6 +443,110 @@ def _count_questions(kind: str) -> int:
     data = json.loads(p.read_text(encoding="utf-8"))
     qs = data.get("questions") if isinstance(data, dict) else data
     return sum(1 for q in qs if q.get("type") == kind)
+
+
+# ---------------------------------------------------------------
+# ★★ STALE_TEXT：文档说某样东西「不存在/还是空/没做」，但它其实已经存在了
+# ---------------------------------------------------------------
+# 这类过期陈述**前两代检查都抓不到**：
+#   - 待办表检查只看〈还没做的〉那一节⇒ 〈自评局限〉里的"held-out 目前仍是
+#     空壳"根本不在扫描范围内（它当时真的还是空壳，后来填到 105 题了）
+#   - 数字对账只认数字⇒「仍是空壳」里没有一个数字
+#   而这一类恰恰最危险：它出现在**自我批评**那一节，面试官最会盯那里，
+#   写着"我的评测集还是空的"会让人以为你没做。
+#
+# 判据：**文档里的某个说法** + **一个能现算的事实** → 两者矛盾就报错。
+STALE_TEXT_RULES: list[dict] = [
+    {
+        "label": "held-out 出题集",
+        # ⚠️盲审实测这组写法都漏，所以扩了词表与锚点：
+        #   原版只认"锚点在短语前"的顺句，且不认大小写/空格变体。
+        #   ⇒ 锚点两侧都试（`held-?out` 前后可换位），
+        #     字符类里加了空格与连字符变体（`held[\s-]?out`）。
+        #   ⚠️ 仍然抓不到跨句号/换行的改写 —— 已知漏检，不假装能抓。
+        "stale_re": r"held[\s-]?out[^。\n]{0,40}?(?:仍?是(?:一片)?(?:空壳|空白|空的)|尚未|还没(?:有题|动手)|暂无)"
+                    r"|(?:仍?是(?:一片)?(?:空壳|空白|空的)|尚未|还没(?:有题|动手))[^\n]{0,40}?held[\s-]?out",
+        # ★ 排除语气：只要句子里出现"已/后来/现在"这类**转折或完成**标记，
+        #   那就是历史叙述或留档，不是"现在还是空的"。
+        #   盲审实测 A 类（"held-out 在 2026-09 之前是空壳，现在已有 105 题"）
+        #   会被误报—— 靠这一条排除。
+        # ⚠️ 这仍不是"上一代检查那种严格语气词表"，只是最粗的一层。
+        #   真正的解法是要求"这一句本身就是当前状态的断言"，
+        #   但那需要语义判断 —— 机械做不到，所以只做到这层。
+        "not_if_re": r"(?:已(?:经)?(?:补|扩|填|做完)|后来|现已|现在已有|→\s*已|已补到|已完成)",
+        "why_false": "evalset/heldout/questions.json 里已经有题了",
+        "actual": lambda: _count_questions("answer") + _count_questions("refuse"),
+        "min": 1,
+    },
+    # ⚠️ 这里本来还有第二条（查 LLM 查询改写有没有被漏写），**已删**。
+    #   删的理由：那条规则写成"必须有某关键词才不报"之后，就永远不会触发 ——
+    #   一条永远不会响的检查比没有更坏，它只会在报告里制造"我查过了"的错觉。
+    #   同源教训：loader 清洗账塌成 0、对账脚本第一版假绿，都是"探头只照一面"。
+    #   ★ 要加这类检查，必须先配一条**能被检出**的变异测试；
+    #     配不出来的，说明这个洞还没想清楚，别急着写检查。
+]
+
+
+def _check_stale_text() -> tuple[list[str], list[str]]:
+    """★ 文档声称某样东西不存在/还是空的，但它其实已经在了。
+
+    ⚠⚠ 2026-10-11 盲审后**降级为警告**，理由写在下面 —— 它抓不到漏的，
+    却会报不假的错。一个爱报假错的检查会被当成噪音关掉，那比不检查更坏。
+
+    盲审（cc 9 条 / DSH 8 条，5 处独立重合）实测出的问题：
+      · **假阳性**：把那句话划删除线留档（仓库自己的标准做法）
+        → 照报；写"以前是空壳，现在已补到 105 题"这种**正确**的历史叙述
+        → 也照报。同脚本的 `_todo_section` 专门剥`~~…~~`，理由就是同一个。
+      · **漏检**：短语在锚点前 / `Held-Out` 大写 / `held out` 空格 /
+        跨句号 —— 四种写法一个都不抓。
+      · **探针可静默关掉**：`questions.json` 一删，n=0 < min，检查变绿。
+      · **报错信息里的数字是抄的**：题数变了它自己先过期。
+      · ★★ **变异与规则同源**（DSH 第 8 条，最要命）：
+        变异替换成的那句话，正是正则照着设计时用的那句话
+        ⇒ "1/1 检出"几乎不携带信息量。这条检查当初是照着"能响"的标准建的，
+        但那只是自证。
+
+    ⇒ 所以现在它只**提示**、不拦提交。要变成拦提交的那类，
+      必须先补上【负向变异】（"应当保持绿"的那几个：删除线留档、历史叙述）
+      和【同源变异】（改写法而不是改回原句）。那两条配不出来之前，
+      它不该有否决权。
+    """
+    rd_path = REPO_ROOT / "README.md"
+    if not rd_path.exists():
+        return [], []
+    rd_raw = rd_path.read_text(encoding="utf-8")
+
+    # ★ 剥删除线：与 _todo_section 同款处理。
+    #   不剥的话，"把旧说法划掉留档"这个仓库自己的标准做法会被当成过期陈述。
+    rd = re.sub(r"~~.*?~~", " ", rd_raw, flags=re.S)
+
+    warns: list[str] = []
+    for rule in STALE_TEXT_RULES:
+        m = re.search(rule["stale_re"], rd, flags=re.I)   # ★ 大小写变体也算
+        if not m:
+            continue
+        # ★ 语气排除：命中"已完成/后来/现在已有"→ 是历史叙述或留档，不是过期陈述
+        #   拿整句（取命中所在那一行）去判，而不是只看命中片段 ——
+        #   "现在已有 105 题"往往就在同句的后半段，片段里看不到。
+        line_start = rd.rfind("\n", 0, m.start()) + 1
+        line_end = rd.find("\n", m.end())
+        line = rd[line_start : line_end if line_end != -1 else len(rd)]
+        if "not_if_re" in rule and re.search(rule["not_if_re"], line, flags=re.I):
+            continue
+        try:
+            n = rule["actual"]()
+        except Exception as e:
+            warns.append(f"⚠ {rule['label']}：判据执行失败（{e!r}），这条提示本轮没生效")
+            continue
+        if n >= rule["min"]:
+            snippet = m.group(0)[:50].replace("\n", " ")
+            # ★ 报错信息里的数字现算，不抄 —— 抄的话它自己会先过期
+            warns.append(
+                f"· 疑似过期陈述：README 写着「{snippet}」，"
+                f"但现算实情是{rule['why_false']}（现算值 {n}）。"
+                f"请看一眼是不是留档旧说法；若确实是过期陈述就改掉。"
+            )
+    return [], warns
 
 
 def _check_todo_claims() -> list[str]:
@@ -523,6 +627,16 @@ def check() -> tuple[list[str], list[str]]:
     errors += _check_completed_list_metrics()
     errors += _check_recall()
     errors += _check_scale_ranks()
+    # ★ 过期陈述（文档说某物不存在，但它其实在）——
+    #   ⚠️ 只提示不拦提交，理由见 _check_stale_text 的 docstring（盲审后降级：
+    #     变异与规则同源 ⇒"能响"是自证；且有实测假阳性）
+    _e, _w = _check_stale_text()
+    errors += _e
+    warns += _w
+    # ★★ 探头自检：规则列表为空 = 这一族整个没跑
+    if not STALE_TEXT_RULES:
+        errors.append("⚠⚠【探头失灵】STALE_TEXT_RULES 是空的 —— "
+                      "「过期陈述」这一族本轮完全没执行")
 
     # 通用断言：产物侧现算
     for a in ASSERTIONS:

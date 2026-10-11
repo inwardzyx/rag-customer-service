@@ -143,7 +143,13 @@ def main():
     args = ap.parse_args()
 
     global USE_REWRITE
-    USE_REWRITE = not args.no_rewrite
+    # ★ 只在【在线层】改写查询。第一版写成 `not args.no_rewrite`（错），
+    #   于是离线评测也去"改写" —— 而离线层注入的是 _OfflineLLM，它返回一句固定的
+    #   「（离线评测不调用生成模型）」，被当成改写结果用于**所有**题目
+    #   ⇒ 20 道题的检索查询全变成同一句，top-1 向量分全是 0.4240、Recall@5 归零。
+    #   （这个回归是 scripts/check_readme_numbers.py 抓出来的：
+    #     README 写 15/15、产物 0/15 —— 对账器存在的意义当场兑现了一次。）
+    USE_REWRITE = args.with_llm and not args.no_rewrite
 
     if args.questions and not args.label:
         ap.error("--questions 必须和 --label 一起用：否则写出的报告会覆盖主评测集的 "
