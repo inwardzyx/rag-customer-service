@@ -1327,7 +1327,7 @@ python evalset/probe_threshold.py        # 扫 VEC_REJECT_THRESHOLD，输出可�
 |---|---|---|---|
 | **fast** | 只装 `pytest` | `tests/test_loader.py`（22 条） | **1.3 秒** |
 | **full** | `requirements.txt` + 下载 92MB 模型 | `test_guard.py` + `test_eval_set.py` + `test_llm_resilience.py`（35 条） | 15 秒起（首次还要下模型） |
-| **docker** | 构建镜像（又是 `requirements.txt` + 92MB 模型） | **在容器里**跑 `test_guard.py`，再起服务打接口 | 首次慢（装依赖 + 下模型），没量过所以不写数 |
+| **docker** | 构建镜像（又是 `requirements.txt` + 92MB 模型） | **在容器里**跑 `test_guard.py`，再起服务打接口 | **138 秒**＝构建 42 ＋ 容器内门禁 51 ＋ 等就绪 40。★ 一次 GitHub runner 的实测值、冷缓存，换 base 镜像或加依赖就会变 —— 不是承诺值 |
 
 > 前两个 job 加起来 **覆盖全部 57 条**（22 + 35），不存在「只在本地跑过」的测试。
 > 第三个 job **不增加覆盖**，它跑的是同一套门禁在**容器里**再来一遍 —— 增加的是**证伪能力**。
@@ -1387,8 +1387,10 @@ docker run --rm -p 8000:8000 rag-cs
    代价也如实写下来：它是**第一次请求**才暴露的，服务启动时不会提醒你。
    不给 key 能用的是 `/health`、`/guard-report`，以及 `/chat` 的 `use_rerank=false` 拒答路径 —— CI 容器 job 断言的就是这三条。
 
-> ★ 坦白一处**我没验到的地方**：镜像 tag `python:3.14-slim` 是否存在、构建耗时与体积，我在这台机器上**验不了** —— 本机没装 Docker（装它要 WSL2/Hyper-V + 重启，会扰动现有的 VirtualBox 环境），而 Docker Hub 从这里的网络出不去（API 返回 502，`web_fetch` 直接把它判成非公网地址）。
-> 所以上面我**没写任何**「镜像 xx MB / 构建 xx 秒」的数字 —— 没量过的数字正是这份 README 一直在剿的东西。tag 与耗时交给 CI 的容器 job 实测：tag 不存在的话，第一步拉镜像就会红，不会静默过去。
+> ★ **一处我验不了、已经交给 CI 的**：镜像 tag `python:3.14-slim` 是否存在 —— 本机没装 Docker（装它要 WSL2/Hyper-V + 重启，会扰动现有的 VirtualBox 环境），Docker Hub 从这里的网络也出不去（API 返回 502，抓取工具直接把它判成非公网地址）。
+> **结论（2026-10-11 CI run #20 实测）：tag 存在，构建 42 秒、容器内门禁 51 秒、等就绪 40 秒。**
+> ★ 但**镜像体积我仍然没写死在这里**，理由是 cc 盲审指出的一条：base 镜像一更新这个数就过期，而 `check_readme_numbers.py` **无法对它现算** —— 冻进文档就成了一个没人能对账的数字（正是这份 README 一直在剿的东西）。
+> 所以改为**容器 job 里打印**（「记下镜像体积」那一步），要看就去 Actions 日志里看。
 
 ---
 

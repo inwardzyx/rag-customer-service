@@ -24,6 +24,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ★ 与两个兄弟（mutate_check.py:40-42 / mutate_check_numbers.py:35）保持一致：
+#   本脚本通篇用 print("✓ …") / print("✗ …") 报结果，而 ✓✗ 在 cp936 里**编不出来**
+#   —— 一旦 stdout 被重定向或被别的进程捕获（_tasks/dispatch.sh 派活时就是写文件），
+#   它会一行都打不出来就崩，**看起来像"变异没检出"，其实是打印失败**。
+#   （实锤：2026-10-11 同款病让 pre-push 报出「产物不合理」这句假话。）
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHECK = REPO_ROOT / "scripts" / "check_artifact_sanity.py"
 PY = sys.executable

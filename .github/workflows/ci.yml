@@ -121,6 +121,15 @@ jobs:
       - name: 构建镜像
         run: docker build -t rag-cs:ci .
 
+      - name: 记下镜像体积（只打印，不冻进 README）
+        # ★ 为什么是"打印"而不是"写进 README 一个数"（cc 盲审指出）：
+        #   base 镜像一更新这个数就过期，而 check_readme_numbers.py 无法对它
+        #   【现算】—— 冻进文档就成了一个没人能对账的数字，
+        #   正是这份 README 一直在剿的东西。要看就来这里看。
+        run: |
+          echo "镜像体积（字节）：$(docker image inspect rag-cs:ci --format '{{.Size}}')"
+          docker images rag-cs:ci
+
       - name: 在【容器里】跑入库把关门禁
         # tests/test_guard.py 已写死「263 留 / 23 拦」，所以这一步同时证明四件事，
         # 且都不是「看着对」：
