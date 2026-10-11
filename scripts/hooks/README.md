@@ -25,7 +25,30 @@ chmod +x .git/hooks/pre-commit .git/hooks/pre-push
 | 钩子 | 调用 | 查什么 |
 |---|---|---|
 | `pre-commit` | `scripts/check_readme_numbers.py` | README 里写的数字 vs 脚本落盘的真实产物 |
-| `pre-push` | `scripts/check_push_paths.py` | **即将推上去的文件**里有没有"本不该进仓库"的 |
+| `pre-push` ① | `scripts/check_push_paths.py` | **即将推上去的文件**里有没有"本不该进仓库"的 |
+| `pre-push` ② | `scripts/check_artifact_sanity.py` | 产物**本身是不是像跑出来的**（坏环境下跑的结果会覆盖好产物） |
+
+⚠️ **两个钩子里都有同一个已踩过的坑**：`[ -x "$PY" ]` 在 Git Bash 下对
+`D:/...` 这种 Windows 形式路径判不出可执行 ⇒ 静默 false ⇒ 解释器变空 ⇒
+检查被整段跳过而钩子照样 exit 0。⇒ 两处都改成 `[ -f ]` + 验活 +
+**拿不到解释器就报错退出**。这个 bug **真实复发过一次**：
+修好提交之后 `scripts/hooks/pre-commit` 又被覆盖回旧版，
+差点让"检查通过"变成一句假话。**改这两个钩子前先读一眼上面这段。**
+
+## ★ pre-push ②：产物合理性检查（2026-10-11）
+
+`evalset/report-vector.md` 曾被一次**坏环境下跑的**评测覆盖成
+Recall@5 **0/15**、两个不同题集的极值撞成同一个常数 **0.4240**，
+而 `run_eval.py` **自己不报错**（它忠实报告了它算出来的东西）。
+它又是别的文档引用的基准 —— 被悄悄改掉后 README 的数字跟着一起变错。
+
+⇒ 检查只拦"**明显不是跑出来的**"，**刻意不设性能下界**
+（那会把真实退化也拦下来，而真实退化是要允许发生并被记录的）。
+
+它的变异测试是 `scripts/mutate_check_artifact.py`（8 条，含 1 条负向）。
+★ 其中一条变异改的是**检查器自己的清单**而不是产物 ——
+因为"漏登记"意味着那份产物**永远不会被检查**，而这正是上一版真实的洞
+（`report-rerank-main-norw.md` 从未被检查过）。
 
 ## ★ pre-push：为什么会有它（2026-10-11，一起真实事故）
 

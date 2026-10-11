@@ -17,8 +17,22 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # ★ 解释器用绝对路径：这台机器裸敲 python 会命中 conda base(3.8)，
 #   跑起来的结果不能代表项目环境（见用户级记忆里的环境事实）。
+# ⚠️ ★ 必须用 [ -f ] 而不是 [ -x ]——
+#   Git Bash 的 `-x` 对 Windows 形式的路径（D:/...）判不出可执行，会静默 false
+#   ⇒ PY 变成空字符串 ⇒ `"$PY" script.py` 退化成 `"script.py"`
+#   ⇒ **检查整段被跳过，而钩子照样 exit 0**。
+#   这是实测发生过的：2026-10-11 我把修复提交后，这个文件又被覆盖回旧版一次，
+#   差点让"检查通过"变成一句假话。所以这里额外加了两道：
+#     ① 验活（`-c "import sys"` 能不能跑）② 都失败就**报错退出**，绝不静默跳过。
 PY="D:/Python-project/.venv/Scripts/python.exe"
-[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+if [ ! -f "$PY" ]; then
+    PY="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "$PY" ] || ! "$PY" -c "import sys" >/dev/null 2>&1; then
+    echo "[pre-commit] ⚠⚠ Python 解释器不可用 —— 本次提交**未做任何检查**。"
+    echo "             请装好 D:/Python-project/.venv 或把 PY 改成可用的路径。"
+    exit 1
+fi
 
 fail=0
 

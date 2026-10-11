@@ -26,8 +26,61 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # 解释器用绝对路径（裸敲 python 会命中 conda base，见用户级环境事实）
+#⚠️ ★ 这里必须用 [ -f ] 而不是 [ -x ]——
+#   Git Bash 的 `-x` 对 Windows 形式的路径（D:/...）判不出可执行，
+#   会静默 false，于是 PY 变成空字符串，后面 `"$PY" script.py` 变成
+#   `"script.py"`，钩子的检查**整段被跳过**（实测：hook 直接卡死在这里）。
+#   这是原版钩子里就有的 bug，2026-10-11 实测发现。
 PY="D:/Python-project/.venv/Scripts/python.exe"
-[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+if [ ! -f "$PY" ]; then
+    PY="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "$PY" ]; then
+    echo "[pre-push] ⚠⚠ 找不到 Python 解释器 —— 本次推送**未做任何检查**。"
+    echo "           请装好 D:/Python-project/.venv 或把 PY 改成可用的路径。"
+    exit 1
+fi
+# ★ 顺带验一下解释器真的能跑（防止 PY 指向一个坏掉的 venv）
+if ! "$PY" -c "import sys" >/dev/null 2>&1; then
+    echo "[pre-push] ⚠⚠ Python 解释器不可用（$PY）—— 本次推送未做任何检查。"
+    exit 1
+fi
 
-# ★ 把 git 传进来的 ref 行原样转给检查器（它自己算要推哪些文件）
-exec "$PY" "$REPO/scripts/check_push_paths.py"
+fail=0
+
+# ---- 1. 出口安全：有没有不该推上去的文件 ----
+# ⚠️ ★ git 调用 pre-push 钩子的协议（githooks(5)）：
+#     **位置参数 = <remote> <url>，ref 行走 stdin**（每行 4 段：local ref/sha、remote ref/sha）。
+#   check_push_paths.py 不带参数时正是从 stdin 读这段，所以这里**原样把 stdin 透下去**，
+#   一个字都不用转换。
+#   ⚠️ 别改成`"$@" --paths "$@"`那类转法—— 2026-10-11 我试过一次，是错的：
+#     真实 push 时 ref 根本不在"$@"里，转过去等于传了个空集合，检查形同虚设。
+#   自测方式（手工喂stdin，模拟真实协议）：
+#     printf 'refs/heads/main <sha> refs/heads/main <sha>\n' | bash .git/hooks/pre-push origin url
+if "$PY" "$REPO/scripts/check_push_paths.py"; then
+    echo "[pre-push] 出口安全 OK"
+else
+    echo "[pre-push] ★ 有不该推的文件被拦下（上面列出的那些）"
+    fail=1
+fi
+echo
+
+# ---- 2. 产物合理性：有没有"坏环境跑出来的结果"混进去 ----
+# ★ 起因：2026-10-11 一次坏环境下跑的评测，把 report-vector.md 覆盖成
+#   Recall@5 0/15、两个不同题集的极值撞成同一个常数 0.4240，
+#   而 run_eval.py 自己不报错（它忠实报告了它算出来的东西）。
+#   ⇒ 这个检查与 git 无关（产物可能在任何一次运行后变坏），但必须在推之前拦。
+if "$PY" "$REPO/scripts/check_artifact_sanity.py"; then
+    echo "[pre-push] 产物合理性 OK"
+else
+    echo "[pre-push] ★ 产物不合理（上面列出的那些）—— 查环境后重跑，别当基线用"
+    fail=1
+fi
+
+echo
+if [ "$fail" -ne 0 ]; then
+    echo "[pre-push] 有检查没通过，推送被拦下。"
+    exit 1
+fi
+echo "[pre-push] 全部通过"
+exit 0
