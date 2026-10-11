@@ -90,6 +90,70 @@ Recall@5 **0/15**、两个不同题集的极值撞成同一个常数 **0.4240**�
 - `--not --remotes` 在"往另一个 remote 推新分支"时可能少算（多 remote 场景），
   详见 `check_push_paths.py` 里的注释。
 
+## ★★★ 远端那道防线：实测是空的（2026-10-11）
+
+上面 P1/P2 讲的全是**本地钩子**。本节记的是**远端**（GitHub）那道，
+以及一次把它测穿了的实验。
+
+### 实验：故意让容器 job 变红
+
+开PR #1（分支 `tmp-verify-gate-can-fail`，已关闭），只改`service.py` 一行：
+把 `/health` 的 `chunks` 硬编码成 `0`（变异选在这里，是因为它躲得过
+前面所有步骤 —— `test_guard.py` 不碰 `/health`，`/health` 仍返回 `status=ok`，
+所以只有第⑤ 步那条`grep -qE '"chunks":[1-9][0-9]+'` 抓得到它）。
+
+结果：
+
+| job | 结果 | 符合预期 |
+|---|---|---|
+| 快 job · 加载器 |✅ 绿 9s | ✅不碰 `/health` |
+| 慢 job · 把关+门禁 | ✅ 绿 1m | ✅ 那三个测试文件都不碰 `/health` |
+| **容器 job** | ❌ **红**（第 ⑤ 步 `exit 1`） | ★ **实验成功** |
+
+⇒ 至此三段都验证过了：
+
+| 说法 | 状态 |
+|---|---|
+| 断言会响 | ✅ 已证（9 条变异含反例+ 这次远程实验） |
+| job 会红 ⇒ workflow 会红 | ✅ 已证（PR 上显示 `1 failing check`） |
+| **workflow 红 ⇒ 推不上去** | ❌ **已证伪** |
+
+### ★ 证伪的那一条：红灯**锁不住** Merge
+
+实验当时的 PR 页面：容器 job 红着、`1 failing check` 挂着，
+而 **`Merge pull request` 按钮依然可点**，旁边还写着
+"No conflicts with base branch / Merging can be performed automatically"。
+
+⇒ 查 `Settings → Branches`，答案是
+**"Classic branch protections have not been configured"** —— **一条规则都没有**。
+
+**GitHub 只有在仓库设置里把某个 check 标成 required（必需检查）时，
+红灯才真正锁住合并。** `pull_request` 触发的检查默认**不是** required。
+
+⇒ 所以这个仓库当前的真实状态是：
+
+- **本地两道（P1钩子）**：真的挡（已用真实 push 验过）
+- **远端那道（CI）**：⚠️ **只会喊，不会拦** —— 它能告诉你"红了"，
+  但你（和任何协作者）该合还是能合
+
+★ **"CI 绿了"和"CI拦得住"是两件事**，今天第一次测后者，就发现不成立。
+这比"CI 能不能变红"重要一个量级：前者的坏后果是"没发现问题"，
+而后者是**"问题被发现了，防线却没挡住"** —— 比没有 CI 更危险，因为它给人虚假的安全感。
+
+### 要补的话，在 Settings → Branches 加一条 rule
+
+⚠️ **但别开"Require a pull request before merging"** —— 那是给多人协作设计的，
+会打断本仓库现在的"直接推 main"习惯（单人项目、每天推好几次）。
+真正该开的是这两项：
+
+| 选项 | 为什么 |
+|---|---|
+| **Require status checks to pass**（勾 `CI / 容器 job`、`CI / 慢 job`） | ★ 这才是"红灯锁住合并"的那一项 |
+| **Do not allow bypassing the above settings** | 否则管理员能一键绕过，等于没开 |
+
+**代价要知道**：开了之后，`git push origin main` 在 CI 没跑完/没绿之前会被拒。
+单人项目可以先只勾"容器 job"（它已经能在 2 分钟内抓到"库里没东西"这类问题）。
+
 ## ⚠️ 这套东西自己也被审过
 
 `check_readme_numbers.py` 的**第一版跑出来是"✓ 通过"**，
