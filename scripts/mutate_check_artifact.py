@@ -30,18 +30,16 @@ PY = sys.executable
 
 TARGET = "evalset/report-vector-heldout.md"
 
-# ★ 事故原始数据：Recall 0/15 + 应答题最低分 == 拒答题最高分 == 0.4240
-#   两处都在同一份产物里 —— 一次坏环境跑出来的
-ACCIDENT = """# 评测报告（离线层(向量分0.55)）
-
-- 应答题数：44　Recall@5：0/44
-- 漏答率：0/44（knowledge_hit==false 才算漏答）
-- 拒答题数：61　拒答准确率：9/61
-- 阈值余量：应答题最低向量分 0.4240（⚠ 已低于阈值）／ 拒答题最高向量分 0.4240（安全（<0.55））
-
-> 注：这一份是注入的假数据，用于验证检查脚本。
-"""
-
+# ★★ 删掉了原来那个 ACCIDENT 常量（2026-10-11 盲审后）。
+#   它是**死代码**：全文只在自己定义那一行出现，从没被任何变异引用 ——
+#   而它偏偏叫"事故原始数据"，读代码的人会以为变异用的就是它。
+#   事实是第1 条变异硬编码的是 heldout 那份的 `0/44`（数字取自它自己的产物），
+#   不是 2026-10-11 那次事故的 `0/15` + 两极值 0.4240（那份是 report-vector.md）。
+#   ⇒ 教训：**"看起来像证据的注释/常量"比没有更坏** ——
+#     它让人以为那条变异是"照着事故写的"，其实不是。
+#     真要保留事故原貌，就让变异真的用它（TARGET 改成 report-vector.md），
+#     或者就别叫它"事故"。
+#
 # (说明, 要替换的原文, 替换成什么, 期望被哪条判据抓到)
 MUTATIONS: list[tuple[str, str, str, str]] = [
     (
@@ -51,9 +49,16 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "判据1（Recall 不能为 0）",
     ),
     (
-        "分母与应答题数不一致",
-        "- 应答题数：44　Recall@5：35/44",
-        "- 应答题数：45　Recall@5：35/44",
+        # ★★ 这条原来是【不纯的】变异（2026-10-11 盲审实测发现）：
+        #   旧版只把「应答题数 44→45」，于是**判据 6 也顺带响了**
+        #   （漏答率分母 44 ≠ 应答题数 45）⇒ 关掉判据 3 它照样"检出"。
+        #   ⇒ 它证明不了判据 3 有效 —— **检出 ≠ 证明**。
+        #   纯化：把漏答率的分母**一起**改成 45，判据 6 就不会误响，
+        #   剩下的唯一触发点才是判据 3。
+        #   （与"变异与规则同源"同族：检出本身不携带信息量。）
+        "分母与应答题数不一致（★已纯化：同步改漏答率分母以隔离判据 6）",
+        "- 应答题数：44　Recall@5：35/44\n- 漏答率：2/44",
+        "- 应答题数：45　Recall@5：35/44\n- 漏答率：2/45",
         "判据3（分母 = 题目集合大小）",
     ),
     (
@@ -115,13 +120,27 @@ NEGATIVE_CASES: list[tuple[str, str, str]] = [
 #   ⚠️ 这条变异**不注入任何坏产物**：如果只有"清单漏登记 + 产物本身健康"，
 #     期望的行为是**必须报错** —— 因为"没人检查它"本身就是缺陷，
 #     不管它现在看起来干不干净。
-LIST_MUTATIONS: list[tuple[str, str, str]] = [
+LIST_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "★ 清单漏登记：把 report-rerank-main-norw.md 从 ARTIFACTS 里去掉"
         "（产物本身健康，但从此不再被任何检查碰过）",
         '"evalset/report-rerank-main-norw.md",\n    ',
         "",
         "判据0（清单反查）",
+    ),
+]
+
+
+# ★★ 诱饵行变异（盲审 DSH 实测发现的洞，2026-10-11）：
+#   旧版 `_extract` 用 `re.search` 只取**第一个**匹配。
+#   在真数据前面插一行长得一样的、真数据改成事故值⇒ 旧版 exit 0 全绿。
+#   这条变异必须**追加一行**而不是替换，故单列（PAIR_MUTATIONS 是"替换"语义）。
+DECOY_MUTATIONS: list[tuple[str, str, str]] = [
+    (
+        "★ 诱饵行：在真数据前插一行相同格式的汇总行，真数据改成 Recall 0/44",
+        # ⚠️ 这两条串必须取自 TARGET（heldout 那份），不是 report-vector.md
+        "- 应答题数：44\u3000Recall@5：35/44",
+        "> 应答题数：44\u3000Recall@5：35/44\n- 应答题数：44\u3000Recall@5：0/44",
     ),
 ]
 
@@ -230,6 +249,30 @@ def main() -> int:
                 print(f"    {first}")
             else:
                 print(f"✓ 保持绿（负向用例）：{desc}")
+                applied += 1
+        finally:
+            _restore(target, original)
+
+    # ---- 诱饵变异：插一行假的汇总行，让真数据被"藏在后面" ----
+    #   这条正是 DSH 盲审实测出来的洞（旧的 re.search 只认第一处匹配）
+    for desc, old, new in DECOY_MUTATIONS:
+        if old not in original:
+            not_applied.append(f"{desc}（原文不存在：{old!r}）")
+            print(f"? 跳过：{desc}")
+            continue
+        target.write_text(original.replace(old, new), encoding="utf-8", newline="")
+        try:
+            code, out = run_check()
+            if code == 0:
+                undetected.append(desc)
+                print(f"✗ 漏检：{desc}")
+            else:
+                first = next(
+                    (ln.strip() for ln in out.splitlines() if ln.strip().startswith("✗")),
+                    "(没打印错误行)",
+                )
+                print(f"✓ 检出：{desc}")
+                print(f"    {first}")
                 applied += 1
         finally:
             _restore(target, original)

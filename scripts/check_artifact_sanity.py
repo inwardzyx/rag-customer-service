@@ -21,25 +21,53 @@
 它必须满足三条才能挂进pre-push：
   1. **零 token、毫秒级** ⇒ 纯读文件 + 正则
   2. **不依赖 git**（坏产物可能在任何一次运行后产生，与提交无关）
-  3. **判据能现算** ⇒ 下界来自"数学上不可能"，不是"我觉得太低"
+  3. **判据能现算** ⇒ 不靠"我觉得太低"，而是靠**逻辑上不可能**
 
 ## ★ 判据怎么来的（每条都必须能解释为什么是这个数）
 
 | 判据 | 下界 | 依据 |
 |---|---|---|
+| **字段不能自相矛盾**（判据 7） | 同一字段全文只有一个值 | 盲审实测的洞：旧版 `re.search` 只认第一处匹配，在真数据前插一行诱饵就能让整份检查失效 |
 | **清单反查**（判据 0） | 清单 ⊇ 磁盘实际产物 | 漏登记的那份**永远不会被检查**。实测踩过：上一版清单少列了 `report-rerank-main-norw.md` |
 | Recall@5 > 0 | > 0 | 15/44 道题里有 gold 与问题字面重合（见 README 自评第 2 条）。全 0 意味着**不是检索差，是 embedding 没加载/语料为空** |
-| 应答题最低向量分 ≠ 拒答题最高向量分 | 不相等即可 | 两个是**不同题目集合**上的极值，正常必不相等。相等 ⇒ 分数没被逐题区分（常量化 / 取错字段 / 没跑） |
-| 分母= 题目集合大小 | 相等 | 产物里的"应答题数"必须等于它自己 Recall 的分母，不等就是字段错位 |
+| 应答题最低向量分 ≠ 拒答题最高向量分 | 不相等即可 | ⚠️ **这条的依据原来是我编的**（原写"正常必不相等""数学上不可能"，盲审驳回，见下） |
+| 分母 = 题目集合大小 | 相等 | 产物里的"应答题数"必须等于它自己 Recall 的分母，不等就是字段错位 |
 | 拒答准确率分母 = 拒答题数 | 相等 | 同上 |
+
+### ⚠️ 判据"两个极值不该相等"是一条**同源**判据，别把它当铁律
+
+**我原来给它的理由是假的。** 我写的是"两个不同题目集合的极值，正常必不相等"、
+"下界来自数学上不可能" —— 盲审（DSH）指出这站不住：两个分布**本来就重叠**，
+当前正在通过的 `report-vector.md` 就是 `ans_min 0.5968 < refuse_max 0.6321`。
+**两个极值不相等是常态，偶尔相等才是异常。**
+
+所以这条判据的真实性质：
+- **只抓一种坏法**：两个字段被解析成**同一个 float**（常量化 / 取错字段 / 没跑）。
+  以下都溜得过去（DSH 实测）：
+  1. 常量化但错开一点点（`0.4240` vs `0.4241`）⇒ 不相等 ⇒ 放行
+  2. 整行"阈值余量"被删掉/改名 ⇒ 判据根本不执行（`in` 前置为假）
+  3. 只伪造其中一个极值、另一个保持真值 ⇒ 不相等 ⇒ 放行
+- **覆盖面只有 2/7**：只有带"阈值余量"行的 `report-vector*.md` 会触发，
+  5 份 rerank 报告没有那行。
+- ⇒ 它**不是数学下界，是"同值很奇怪"的启发式**。留着是因为它确实抓到了那次事故的
+  字面签名，但**别把它当"这份产物明显不是跑出来的"的证明**。
+  ⇒ 与本项目已有的纪律一致：**配不出非同源且可检出的变异，就说明洞还没想清楚。**
 
 ⚠️ **已知抓不到的坏产物**（写下来，免得假装能抓）：
   - **Recall@5 掉了但不为 0** —— 判据 1 只挡"全 0"。真实退化（15/15 → 9/15）
-    属于**要允许发生并被记录**的东西，不该拦。
-  - **rerank 层静默失效** —— 若 rerank 分数没算出来，报告可能退回成vector 层那套数字，
-    两份报告会长得一模一样。这要靠"两份产物的数字不该相同"来判，
-    **本脚本没做**（需要先确认哪些报告本就应该相同，`-norw` 与非 `-norw` 的关系就不简单）。
+    属于**要允许发生并被记录**的东西，不该拦。`1/15`、`35/44→15/44` 全放行，
+    这是**有意的**，不是漏网。
+  - **整份数值都是编的** —— 检查器只核**同文件内字段之间的算术关系**，
+    从不绑定任何外部真相：没有"每份产物应有多少题"的表，也不看题目 ID。
+    DSH 实测把整份换成编的数字（44 / 0/44 / 14/44 / 61 / 50/61 / 0.5000 / 0.6000）⇒ 全绿。
+  - **只留表头、删掉全部明细** ⇒ 全绿（"报告"没有正文也放过）。
+  - **rerank 层静默失效** —— 实测 `report-rerank.md`、`report-rerank-main.md`、
+    `report-rerank-main-norw.md` **SHA256 完全相同**（`52179d0adb51`，各 1645 B）。
+    三份本该属于不同配置的产物一模一样，但检查器**无法区分**
+    "本来就该相同"和"rerank 静默失效退回了旧数字" ⇒ 这条**没做**。
   - **语料换了但没重跑** —— 产物里没记语料指纹/sha，比对不出来。
+  - **命名不落在 `evalset/report*.md` 的产物** —— 判据 0 的反查与清单共享同一个
+    glob，换个名字（`vector-report-v2.md`）就两头都看不见（DSH 实测 exit 0）。
 
 ⚠️ **刻意不做的检查**：
   - 不设"Recall@5 至少 60%"这种**性能下界** —— 那会把"真实退化"也拦下来，
@@ -108,34 +136,62 @@ def _on_disk() -> list[str]:
 
 
 
-def _extract(text: str) -> dict:
+def _grab(text, pattern, cast, label, out):
+    """抓一个字段的**全部**匹配；值不一致 ⇒ 记冲突（由调用方报错），不猜。
+
+    ★ 为什么不能 `re.search` 只取第一个（2026-10-11 盲审实测的洞）：
+      `re.search` 只认文件里**出现的第一处**。
+      实测：在真数据前插一行诱饵（`> 应答题数：15　Recall@5：15/15`）、
+      真数据改成 `0/15` —— 脚本报 **exit 0 全绿**，而文件里明明写着 0/15。
+      ⇒ 判据再严，抽错了字段就等于没检查。
+      （与今日早些时候 `check_readme_numbers.py` 的假绿同源：
+        探头只照一面，却把"没报错"读成"没问题"。）
+
+    ⇒ 冲突时**不写入**：下游"抽不到字段"会报格式错，逼人来看一眼。
+      静默取第一个 = 让人以为检查过了。
+    """
+    # ⚠️ re.M 必须带：下面几个 pattern 用 ^锚定行首（只认汇总行、不认正文里的散落提及），
+    #   漏了它会一个都匹配不上 ⇒ 全部字段"抽不到" ⇒ 满屏假错。
+    vals = {cast(m) for m in re.findall(pattern, text, re.M)}
+    if not vals:
+        return# 抽不到由调用方判（格式变了要报）
+    if len(vals) > 1:
+        out.setdefault("_conflicts", []).append(
+            f"{label}在同一个文件里出现了 **{len(vals)} 个不同的值**："
+            f"{sorted(vals)} —— 同一份产物不可能有两个答案"
+        )
+        return
+    out[label] = vals.pop()
+
+
+def _grab3(text, pattern, keys, out):
+    """同上，但抓的是三元组（如 应答题数/Recall分子/分母）。"""
+    triples = {tuple(int(x) for x in m) for m in re.findall(pattern, text, re.M)}
+    if not triples:
+        return
+    if len(triples) > 1:
+        out.setdefault("_conflicts", []).append(
+            f"{keys[0]} 那一行在同一个文件里出现了 **{len(triples)} 个不同的值**："
+            f"{sorted(triples)} —— 同一份产物不可能有两个答案"
+        )
+        return
+    out[keys[0]], out[keys[1]], out[keys[2]] = triples.pop()
+
+
+def _extract(text):
     """从一份报告里抠出关键字段。抽不到就留 None（由调用方判）。"""
-    out: dict = {}
-
-    m = re.search(r"应答题数：(\d+)\s*Recall@5：(\d+)/(\d+)", text)
-    if m:
-        out["ans_total"] = int(m.group(1))
-        out["recall_ok"] = int(m.group(2))
-        out["recall_den"] = int(m.group(3))
-
-    m = re.search(r"拒答题数：(\d+)\s*拒答准确率：(\d+)/(\d+)", text)
-    if m:
-        out["refuse_total"] = int(m.group(1))
-        out["refuse_ok"] = int(m.group(2))
-        out["refuse_den"] = int(m.group(3))
-
-    m = re.search(r"漏答率：(\d+)/(\d+)", text)
-    if m:
-        out["miss_ok"] = int(m.group(1))
-        out["miss_den"] = int(m.group(2))
-
-    m = re.search(r"应答题最低向量分\s*([0-9.]+)", text)
-    if m:
-        out["ans_min_score"] = float(m.group(1))
-    m = re.search(r"拒答题最高向量分\s*([0-9.]+)", text)
-    if m:
-        out["refuse_max_score"] = float(m.group(1))
-
+    out = {}
+    _grab3(text, r"^- 应答题数：(\d+)\s*Recall@5：(\d+)/(\d+)",
+           ("ans_total", "recall_ok", "recall_den"), out)
+    _grab3(text, r"^- 拒答题数：(\d+)\s*拒答准确率：(\d+)/(\d+)",
+           ("refuse_total", "refuse_ok", "refuse_den"), out)
+    _grab(text, r"^- 漏答率：(\d+)/(\d+)",
+          lambda m: (int(m[0]), int(m[1])), "漏答率", out)
+    _grab(text, r"应答题最低向量分\s*([0-9.]+)", float, "ans_min_score", out)
+    _grab(text, r"拒答题最高向量分\s*([0-9.]+)", float, "refuse_max_score", out)
+    # 漏答率是二元组 ⇒ 单独落回两个键
+    if "漏答率" in out:
+        out["miss_ok"], out["miss_den"] = out.pop("漏答率")
     return out
 
 
@@ -150,6 +206,15 @@ def check_one(rel: str) -> list[str]:
         return [f"✗ {rel}：只有 {len(text)} 字节 —— 评测跑到一半崩了？"]
     d = _extract(text)
     errs: list[str] = []
+
+    # ---- ★ 判据 7（盲审补的）：同一份产物里字段自相矛盾 ⇒ 报错 ----
+    #   这是"诱饵行"那条洞的正解：不再静默取第一个匹配。
+    for c in d.get("_conflicts", []):
+        errs.append(
+            f"✗ {rel}：{c}"
+            f"★ 同一份产物不可能有两个答案。要么产物坏了，要么有人手改了它。"
+            f"（旧版只认第一处匹配 ⇒ 别人在前面插一行就能让整份检查失效）"
+        )
 
     # ---- 字段抽取失败 =产物格式变了，要人看一眼 ----
     if "recall_den" not in d:
