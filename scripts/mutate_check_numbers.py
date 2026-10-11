@@ -83,6 +83,13 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "12/15",
     ),
     (
+        "往〈还没做的〉塞一条【没登记】的待办（验证元检查 _check_todo_registry_complete）",
+        "README.md",
+        "主动写出来，比被面试官挖出来强。",
+        "主动写出来，比被面试官挖出来强。\n\n"
+        "| **量子计算加速** | 还没做 | 为什么要做 |",
+    ),
+    (
         "把已完成的待办塞回〈还没做的〉（验证 _check_todo_claims）",
         "README.md",
         "主动写出来，比被面试官挖出来强。",

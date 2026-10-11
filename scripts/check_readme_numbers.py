@@ -306,30 +306,132 @@ def _check_scale_ranks() -> list[str]:
 #   这里补上：**每条待办配一个可现算的完成判据**，达标了却还挂着 → 报错。
 #   ⚠️ 匹配式必须带"未完成"的语气词（只有/仅/需/要/尚未/待），
 #     否则将来写"曾计划 n≥60，已于 X 完成"这种历史叙述会被误伤。
-TODO_CLAIMS = [
+# ★ 待办登记表（第二版：从「点检查」升级成「面检查」）
+#
+# 第一版只查"登记过的待办有没有过期"——**它能查的只有我想到的**：
+# 以后新写一条待办如果没登记，检查器看不见它。而"看不见"正是这一系列问题的源头
+# （用户的原话：不是忘了改，是**没人告诉它过期了**）。
+# ⇒ 现在〈还没做的〉表里**每一行都必须在这里登记**，否则报错 ——
+#   "登记"从靠记性变成强制的。
+#
+# kind：
+#   counted —— 现算一个数量，≥ done_at 算完成
+#   file    —— 某个文件存在算完成
+#   manual  —— 不可机械判定；**必须**写 why（为什么判不了）+ how（人工怎么确认），
+#              且每次运行都把它们打成提示：数量涨了说明有人在拿 manual 逃避登记
+TODO_REGISTRY = [
     {
+        "row": r"拒答集",
         "label": "拒答集扩到 n≥60",
-        "re": r"(?:拒答集[^\n]{0,24}(?:只有|仅有?)\s*\d+\s*条)"
-              r"|(?:(?:要|需|应|尚未|待)[^\n]{0,30}n\s*[≥>=]+\s*60)",
+        "kind": "counted",
         "actual": lambda: _count_questions("refuse"),
         "done_at": 60,
+        "pending_re": r"(?:只有|仅有?)\s*\d+\s*条|n\s*[≥>=]+\s*60",
         "fix": "把那条待办删掉，并在评测一节写上实测值（RESULTS.md 有全部数字）",
     },
     {
+        "row": r"GIF|录一段",
         "label": "录一段 GIF 放 README 顶部",
-        "re": r"(?:(?:要|需|应|尚未|待)[^\n]{0,20}录[^\n]{0,12}GIF)",
-        "actual": lambda: 1 if (REPO_ROOT / "docs" / "images" / "demo.gif").exists() else 0,
+        "kind": "file",
+        "path": "docs/images/demo.gif",
         "done_at": 1,
+        "pending_re": r"(?:要|需|应|尚未|待)[^\n]{0,20}录[^\n]{0,12}GIF",
         "fix": "动图已存在（docs/images/demo.gif），把那条待办标成已完成",
     },
     {
+        "row": r"Dockerfile",
         "label": "补 Dockerfile",
-        "re": r"(?:(?:要|需|应|尚未|待|没有)[^\n]{0,16}Dockerfile)",
-        "actual": lambda: 1 if (REPO_ROOT / "Dockerfile").exists() else 0,
+        "kind": "file",
+        "path": "Dockerfile",
         "done_at": 1,
+        "pending_re": r"Dockerfile",
         "fix": "Dockerfile 已存在，把〈还没做的〉里那条删掉",
     },
+    {
+        "row": r"部署",
+        "label": "部署到线上",
+        "kind": "manual",
+        "why": "部署状态不在本机可判 —— 「有没有线上地址」这件事本身要外部确认",
+        "how": "README 里有没有一个**可点开**的线上地址",
+    },
+    {
+        "row": r"粗捞池",
+        "label": "粗捞池只有 5 条",
+        "kind": "manual",
+        "why": "这条不是待办而是**已决定不做**（见〈敏感性实验〉那节的对照表），没有「完成」态",
+        "how": "确认那段决策记录还在，且与 `search(k=5)` 的现状一致",
+    },
+    {
+        "row": r"超时",
+        "label": "超时只能不等、不能掐断",
+        "kind": "manual",
+        "why": "异步取消是否实现，静态判不出来（要看运行时行为）",
+        "how": "`service.py::_invoke_llm` 是否仍是「线程池 + future.result(timeout=)」",
+    },
 ]
+
+
+def _todo_section() -> str | None:
+    """抠出 README 的〈还没做的〉那一节。
+
+    ★ 先剥掉 `~~删除线~~`：Markdown 里删除线就是「已作废」的记号，
+      常被用来**留档旧说法**（「~~拒答集只有 5 条~~ → 已扩到 61 道」）。
+      不剥的话，那句留档本身会被判成待办还在 —— 第一版就是这样，
+      检查器报了它自己刚生成的留档。
+    """
+    rd = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    rd = re.sub(r"~~.*?~~", " ", rd, flags=re.S)
+    m = re.search(r"^## 还没做的.*?(?=^## |\Z)", rd, re.S | re.M)
+    return m.group(0) if m else None
+
+
+def _todo_rows(seg: str) -> list[str]:
+    """表里每一行的第一格（缺口名）。表头与 `|---|---|` 分隔行跳过。"""
+    rows = []
+    for line in seg.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not cells or set(cells[0]) <= set("-: "):
+            continue
+        if cells[0] == "缺口":
+            continue
+        rows.append(cells[0].replace("**", ""))
+    return rows
+
+
+def _check_todo_registry_complete() -> tuple[list[str], list[str]]:
+    """★ 元检查：〈还没做的〉里**每一行**都必须在 TODO_REGISTRY 里登记。
+
+    不登记 = 这台检查器看不见它，以后它过期了也没人知道 —— 而那正是这一系列问题的病根。
+    """
+    seg = _todo_section()
+    if seg is None:
+        return ([ "✗ 待办登记检查：README 里找不到「## 还没做的」这一节 —— "
+                  "这一族检查失去作用对象，请同步更新本脚本"], [])
+    errs: list[str] = []
+    manual: list[str] = []
+    for row in _todo_rows(seg):
+        hit = [t for t in TODO_REGISTRY if re.search(t["row"], row)]
+        if not hit:
+            errs.append(
+                f"✗ 待办没登记：「{row}」在〈还没做的〉表里，但 TODO_REGISTRY 里没有对应条目。"
+                f"要么给它一个可现算的完成判据（kind=counted/file），"
+                f"要么声明 kind=manual 并写清「为什么不可机械判定 / 人工怎么确认」。"
+                f"—— 不登记 = 检查器看不见它，以后它过期了也没人知道")
+        for t in hit:
+            if t["kind"] == "manual":
+                if not t.get("why", "").strip() or not t.get("how", "").strip():
+                    errs.append(f"✗ 待办登记不完整：「{t['label']}」标成 manual，"
+                                f"但 why / how 有空项 —— 那等于没登记")
+                else:
+                    manual.append(t["label"])
+    warns = []
+    if manual:
+        warns.append(f"{len(manual)} 条待办是**人工判定**的（不可机械判定）："
+                     + "、".join(manual)
+                     + " —— ★ 这个数量涨了，通常说明有人在拿 manual 逃避登记")
+    return errs, warns
 
 
 def _count_questions(kind: str) -> int:
@@ -344,19 +446,24 @@ def _count_questions(kind: str) -> int:
 
 
 def _check_todo_claims() -> list[str]:
-    rd = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    # ★ 先剥掉 `~~删除线~~`：Markdown 里删除线就是"已作废"的记号，
-    #   它常常被用来**留档旧说法**（"~~拒答集只有 5 条~~ → 已扩到 61 道"）。
-    #   不剥的话，我写的那句完成说明本身会被判成"待办还在" ——
-    #   第一版就是这样，检查器报了它自己刚生成的留档。
-    rd = re.sub(r"~~.*?~~", " ", rd, flags=re.S)
+    """登记过的待办：达标了却还挂在表里 → 报错。"""
+    seg = _todo_section()
+    if seg is None:
+        return []            # 「那一节没了」由 _check_todo_registry_complete 负责报
+    rows = _todo_rows(seg)
     errs = []
-    for t in TODO_CLAIMS:
-        n = t["actual"]()
-        if n >= t["done_at"] and re.search(t["re"], rd):
-            errs.append(
-                f"✗ 待办陈述过期：「{t['label']}」还写在 README 里，"
-                f"但实测已经 {n}（完成判据 ≥{t['done_at']}）—— {t['fix']}")
+    for t in TODO_REGISTRY:
+        if t["kind"] == "manual":
+            continue
+        n = (t["actual"]() if t["kind"] == "counted"
+             else (1 if (REPO_ROOT / t["path"]).exists() else 0))
+        if n < t.get("done_at", 1):
+            continue
+        for row in rows:
+            if re.search(t["row"], row) and re.search(t["pending_re"], row):
+                errs.append(
+                    f"✗ 待办陈述过期：「{t['label']}」还挂在〈还没做的〉里，"
+                    f"但实测已经 {n}（完成判据 ≥{t.get('done_at', 1)}）—— {t['fix']}")
     return errs
 
 
@@ -410,6 +517,9 @@ def check() -> tuple[list[str], list[str]]:
 
     errors += _check_refuse_rate()
     errors += _check_todo_claims()
+    _e, _w = _check_todo_registry_complete()
+    errors += _e
+    warns += _w
     errors += _check_completed_list_metrics()
     errors += _check_recall()
     errors += _check_scale_ranks()
