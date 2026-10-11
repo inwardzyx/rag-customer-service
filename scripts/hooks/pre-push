@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ============================================================
+# pre-push —— 推之前挡住「本不该进仓库」的文件
+# ============================================================
+# ★ 为什么需要它（2026-10-11，一起真实事故）：
+#   提交 7252a69（2026-09-24 10:53）把 CLAUDE.md + 4 个 cc_*.md 推上了公开仓库。
+#   次日 16:14 主干被 git filter-branch 重写，这些文件不在当前树里了 ——
+#   **但 GitHub 上那个提交仍按 SHA 可达**，而且
+#     https://github.com/<owner>/<repo>/commit/<sha>.patch
+#   一个普通 URL 就能把 5 个文件的完整正文吐出来（实测 200 / 20788 字节）。
+#
+#   ⇒ 教训一句话：**push 是单向门。**
+#     `.gitignore` 只挡"以后"；删除本地分支对远端毫无帮助 ——
+#     远端对象的存在性只由「是否 push 过」决定，此后一切本地操作无关。
+#
+# ★ 它和 pre-commit 的分工：
+#   pre-commit → 提交前查 README 的数字对不对（内容正确性）
+#   pre-push   → 推之前查有没有不该推的文件（出口安全）
+#   两者都只做「几毫秒能查完、且不留假象」的检查，都不派 agent。
+#
+# ⚠️ 已知边界：它拦不住"已经在远端的孤儿提交"（那要靠推后审计，
+#    见 scripts/hooks/README.md 的 P2 一节）。
+# ============================================================
+
+set -uo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# 解释器用绝对路径（裸敲 python 会命中 conda base，见用户级环境事实）
+PY="D:/Python-project/.venv/Scripts/python.exe"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+
+# ★ 把 git 传进来的 ref 行原样转给检查器（它自己算要推哪些文件）
+exec "$PY" "$REPO/scripts/check_push_paths.py"
