@@ -126,9 +126,17 @@ jobs:
         #   base 镜像一更新这个数就过期，而 check_readme_numbers.py 无法对它
         #   【现算】—— 冻进文档就成了一个没人能对账的数字，
         #   正是这份 README 一直在剿的东西。要看就来这里看。
+        #
+        # ★ 为什么额外发一条 ::notice::（2026-10-11 实测后加的）：
+        #   Actions 的【日志】接口要 token —— 未认证 GET /actions/jobs/{id}/logs 返回 403；
+        #   而工作流命令会变成【check-run 注解】，注解接口**不需要 token**
+        #   （实测 GET {check_run_url}/annotations → 200，能读到真实的 notice / warning）。
+        #   ⇒ 凡是想让"不登录也能机械读到"的数字，走 ::notice:: 比走日志靠谱。
         run: |
-          echo "镜像体积（字节）：$(docker image inspect rag-cs:ci --format '{{.Size}}')"
+          size=$(docker image inspect rag-cs:ci --format '{{.Size}}')
+          echo "镜像体积（字节）：$size"
           docker images rag-cs:ci
+          echo "::notice::镜像体积 = $((size / 1024 / 1024)) MB（$size 字节）"
 
       - name: 在【容器里】跑入库把关门禁
         # tests/test_guard.py 已写死「263 留 / 23 拦」，所以这一步同时证明四件事，
